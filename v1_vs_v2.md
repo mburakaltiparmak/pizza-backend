@@ -1418,6 +1418,13 @@ Impact: No registration required
 - ⚠️  Low unit test coverage (manual testing)
 - ⚠️  Slight code duplication in some controllers
 
+## 📚 Resources
+
+**v2 (Current Version):**
+- **Repository:** https://github.com/mburakaltiparmak/pizza-backend.git
+- **Production:** https://your-production-url.com
+- **Postman:** [View Collection](https://www.postman.com/pizza-backend/workspace/pizza-backend/collection/32496177-770efdcb-9897-40a5-9a77-2f34081ed19a?action=share&creator=32496177&active-environment=32496177-d2a8a687-e648-4081-98c0-c4880c12278e)
+
 **Contact:**
 - Developer: M.Burak Altiparmak
 - Email: mburakaltiparmak@gmail.com

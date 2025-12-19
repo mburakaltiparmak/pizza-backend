@@ -9,7 +9,7 @@
 
 Enterprise-grade Pizza Order Management System backend with modern Spring Boot architecture, featuring JWT authentication, Redis caching, Elasticsearch search, and Iyzico payment gateway integration.
 
-**🌐 API Documentation:** Comprehensive REST API for Pizza Order Management  
+**🌐 API Documentation:** [Comprehensive Postman Collection](https://www.postman.com/pizza-backend/workspace/pizza-backend/collection/32496177-770efdcb-9897-40a5-9a77-2f34081ed19a?action=share&creator=32496177&active-environment=32496177-d2a8a687-e648-4081-98c0-c4880c12278e)  
 **📊 Health Check:** `GET /pizza/actuator/health`
 
 ---
@@ -167,7 +167,9 @@ IYZICO_BASE_URL=https://sandbox-api.iyzipay.com
 ### Base URLs
 
 - **Production:** `https://your-production-url.com/pizza/api`
+- **Production:** `https://your-production-url.com/pizza/api`
 - **Development:** `http://localhost:8080/pizza/api`
+- **Postman:** [![Run in Postman](https://run.pstmn.io/button.svg)](https://www.postman.com/pizza-backend/workspace/pizza-backend/collection/32496177-770efdcb-9897-40a5-9a77-2f34081ed19a?action=share&creator=32496177&active-environment=32496177-d2a8a687-e648-4081-98c0-c4880c12278e)
 
 ### Authentication Setup
 
