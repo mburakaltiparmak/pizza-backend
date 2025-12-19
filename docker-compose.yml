@@ -1,0 +1,234 @@
+services:
+  # ============================================================================
+  # CADDY WEB SERVER (HTTPS & REVERSE PROXY)
+  # ============================================================================
+  caddy:
+    image: caddy:latest
+    container_name: pizza-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - app
+    networks:
+      - pizza-network
+
+  # ============================================================================
+  # POSTGRESQL DATABASE SERVICE
+  # ============================================================================
+  postgres:
+    image: postgres:17-alpine
+    container_name: pizza-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8"
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-schema.sql:/docker-entrypoint-initdb.d/00-init-schema.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+    networks:
+      - pizza-network
+
+  # ============================================================================
+  # REDIS CACHE SERVICE
+  # ============================================================================
+  redis:
+    image: redis:7-alpine
+    container_name: pizza-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes --requirepass ""
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    networks:
+      - pizza-network
+
+  # ============================================================================
+  # ELASTICSEARCH SERVICE
+  # ============================================================================
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+    container_name: pizza-elasticsearch
+    restart: unless-stopped
+    environment:
+      - cluster.name=pizza-cluster
+      - node.name=pizza-node-1
+      - discovery.type=single-node
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+      - xpack.security.enabled=false
+      - xpack.security.http.ssl.enabled=false
+      - xpack.security.transport.ssl.enabled=false
+      - bootstrap.memory_lock=true
+      - indices.query.bool.max_clause_count=4096
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    ports:
+      - "9200:9200"
+      - "9300:9300"
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    networks:
+      - pizza-network
+
+  # ============================================================================
+  # KIBANA SERVICE
+  # ============================================================================
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.11.0
+    container_name: pizza-kibana
+    restart: unless-stopped
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+      - SERVER_NAME=pizza-kibana
+      - SERVER_HOST=0.0.0.0
+      - LOGGING_ROOT_LEVEL=info
+      - I18N_LOCALE=en
+    ports:
+      - "5601:5601"
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:5601/api/status || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    networks:
+      - pizza-network
+
+  # ============================================================================
+  # SPRING BOOT APPLICATION SERVICE
+  # ============================================================================
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: pizza-app
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      # ========== SPRING PROFILE ==========
+      SPRING_PROFILES_ACTIVE: prod
+
+      # ========== DATABASE (Spring Boot Standard Naming) ==========
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/postgres?currentSchema=pizza
+      SPRING_DATASOURCE_USERNAME: postgres
+      SPRING_DATASOURCE_PASSWORD: ${SPRING_DATASOURCE_PASSWORD}
+
+      # ========== REDIS (Spring Boot Standard Naming) ==========
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: 6379
+      SPRING_DATA_REDIS_PASSWORD: ""
+
+      # ========== ELASTICSEARCH (Spring Boot Standard Naming) ==========
+      SPRING_ELASTICSEARCH_URIS: http://elasticsearch:9200
+
+      # ========== JWT ==========
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXPIRATION: ${JWT_EXPIRATION:-86400000}
+
+      # ========== SUPABASE (Required for JwksService) ==========
+      APP_SUPABASE_URL: ${SUPABASE_URL}
+      APP_SUPABASE_ENABLED: "true"
+
+      # ========== CLOUDINARY (Spring Boot Relaxed Binding) ==========
+      CLOUDINARY_CLOUD_NAME: ${CLOUD_NAME}
+      CLOUDINARY_API_KEY: ${API_KEY}
+      CLOUDINARY_API_SECRET: ${API_SECRET}
+
+      # ========== MAIL (Spring Boot Standard Naming) ==========
+      SPRING_MAIL_HOST: ${MAIL_HOST}
+      SPRING_MAIL_PORT: ${MAIL_PORT}
+      SPRING_MAIL_USERNAME: ${MAIL_USERNAME}
+      SPRING_MAIL_PASSWORD: ${MAIL_PASSWORD}
+
+      # ========== IYZICO PAYMENT ==========
+      IYZICO_API_KEY: ${IYZICO_API_KEY}
+      IYZICO_SECRET_KEY: ${IYZICO_SECRET_KEY}
+      IYZICO_BASE_URL: ${IYZICO_BASE_URL:-https://sandbox-api.iyzipay.com}
+      IYZICO_CALLBACK_URL: ${IYZICO_CALLBACK_URL}
+
+      # ========== CORS ==========
+      CORS_ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:3000}
+
+      # ========== SERVER ==========
+      SERVER_PORT: 8080
+      SERVER_SERVLET_CONTEXT_PATH: /pizza
+
+      # ========== JVM OPTIONS ==========
+      JAVA_OPTS: "-Xmx512m -Xms256m"
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/pizza/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    networks:
+      - pizza-network
+    volumes:
+      - app_logs:/app/logs
+
+# ============================================================================
+# NETWORKS
+# ============================================================================
+networks:
+  pizza-network:
+    driver: bridge
+
+# ============================================================================
+# VOLUMES
+# ============================================================================
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  elasticsearch_data:
+    driver: local
+  app_logs:
+    driver: local
+  caddy_data:
+  caddy_config:

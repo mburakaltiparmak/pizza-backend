@@ -1,0 +1,6 @@
+# Spring Boot Factories Configuration
+# This file registers custom initializers and listeners
+
+# Context Initializers
+org.springframework.context.ApplicationContextInitializer=\
+  com.example.pizza.config.auth.DotenvConfig
