@@ -1,4 +1,4 @@
-# 🍕 Pizza Project RESTful API Documentation
+# 🍕 Pizza Project RESTful API Documentation v2.1
 
 [![Java](https://img.shields.io/badge/Java-17-orange.svg)](https://www.oracle.com/java/)
 [![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.4.2-brightgreen.svg)](https://spring.io/projects/spring-boot)
@@ -30,6 +30,7 @@ Enterprise-grade Pizza Order Management System backend with modern Spring Boot a
   - [Payment](#8-payment-endpoints)
 - [Response Models](#-response-models)
 - [Error Handling](#-error-handling)
+- [Monitoring & Observability](#-monitoring--observability)
 - [Performance Tips](#-performance-tips)
 - [Contributing](#-contributing)
 
@@ -66,10 +67,13 @@ Enterprise-grade Pizza Order Management System backend with modern Spring Boot a
 - **Payment Status Tracking**
 
 ### 📊 Monitoring & Observability
-- **Spring Boot Actuator** endpoints
-- **Custom Health Checks**
-- **Application Metrics**
-- **HTTP Request Tracking**
+- **Prometheus** - Metrics collection and time-series database
+- **Grafana** - Data visualization and dashboards
+- **Node Exporter** - Hardware and OS metrics
+- **cAdvisor** - Container resource usage monitoring
+- **Spring Boot Actuator** - Application health and metrics endpoints
+- **Custom Health Checks** - Service dependency monitoring
+- **30-day Metric Retention** - Historical data analysis
 
 ---
 
@@ -85,7 +89,7 @@ Enterprise-grade Pizza Order Management System backend with modern Spring Boot a
 | **Payment** | Iyzico Payment Gateway |
 | **File Storage** | Cloudinary |
 | **Deployment** | Docker |
-| **Monitoring** | Spring Boot Actuator |
+| **Monitoring** | Prometheus, Grafana, Spring Boot Actuator, node-exporter, cAdvisor |
 
 ---
 
@@ -3108,6 +3112,178 @@ try {
   }
   throw error;
 }
+```
+
+---
+
+## 📊 Monitoring & Observability
+
+The application includes a comprehensive monitoring stack to track application performance, system resources, and container metrics.
+
+### Services Overview
+
+| Service | URL | Port | Credentials | Description |
+|---------|-----|------|-------------|-------------|
+| **Prometheus** | http://localhost:9090 | 9090 | - | Metrics collection and time-series database |
+| **Grafana** | http://localhost:3001 | 3001 | admin/admin | Data visualization and dashboards |
+| **Node Exporter** | http://localhost:9100/metrics | 9100 | - | Host/OS metrics exporter |
+| **cAdvisor** | http://localhost:8081 | 8081 | - | Container resource usage analyzer |
+
+### Starting Monitoring Stack
+
+```bash
+# Start all monitoring services
+docker-compose up -d prometheus grafana node-exporter cadvisor
+
+# Check service status
+docker-compose ps
+
+# View Prometheus logs
+docker logs pizza-prometheus
+
+# View Grafana logs  
+docker logs pizza-grafana
+```
+
+### Prometheus Configuration
+
+The Prometheus service scrapes metrics from multiple targets:
+
+- **Spring Boot Application** (`/pizza/actuator/prometheus`)
+  - JVM metrics (heap, threads, GC)
+  - HTTP request metrics
+  - Database connection pool metrics
+  - Redis cache metrics
+  - Custom business metrics
+
+- **Node Exporter** (System metrics)
+  - CPU usage
+  - Memory usage
+  - Disk I/O
+  - Network statistics
+
+- **cAdvisor** (Container metrics)
+  - Container CPU usage
+  - Container memory usage
+  - Network I/O per container
+  - Filesystem usage
+
+**Retention:** Data is retained for 30 days by default.
+
+### Grafana Setup
+
+1. **Access Grafana**
+   ```
+   URL: http://localhost:3001
+   Username: admin
+   Password: admin
+   ```
+
+2. **Add Prometheus Data Source**
+   - Go to Configuration → Data Sources
+   - Click "Add data source"
+   - Select "Prometheus"
+   - Set URL to `http://prometheus:9090`
+   - Click "Save & Test"
+
+3. **Import Dashboards**
+
+   **Spring Boot Dashboard** (JVM, HTTP, DB metrics)
+   - Dashboard ID: `12900` or `11378`
+   - Go to Dashboards → Import
+   - Enter dashboard ID
+   - Select Prometheus data source
+
+   **Node Exporter Dashboard** (System metrics)
+   - Dashboard ID: `1860`
+   - Full system overview with CPU, memory, disk, network
+
+   **cAdvisor Dashboard** (Container metrics)
+   - Dashboard ID: `14282` or `893`
+   - Container resource usage and performance
+
+   **Redis Dashboard** (Cache metrics)
+   - Dashboard ID: `11835`
+   - Redis performance and cache hit rates
+
+### Key Metrics to Monitor
+
+#### Application Metrics
+- **Request Rate**: `rate(http_server_requests_seconds_count[5m])`
+- **Error Rate**: `rate(http_server_requests_seconds_count{status="500"}[5m])`
+- **Response Time (p95)**: `http_server_requests_seconds{quantile="0.95"}`
+- **JVM Heap Usage**: `jvm_memory_used_bytes{area="heap"}`
+
+#### System Metrics
+- **CPU Usage**: `100 - (avg(rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100)`
+- **Memory Usage**: `(1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100`
+- **Disk Usage**: `(node_filesystem_size_bytes - node_filesystem_free_bytes) / node_filesystem_size_bytes * 100`
+
+#### Container Metrics
+- **Container CPU**: `rate(container_cpu_usage_seconds_total[5m])`
+- **Container Memory**: `container_memory_usage_bytes`
+
+### Alerting (Optional)
+
+Configure alerts in Prometheus (`prometheus.yml`):
+
+```yaml
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ['alertmanager:9093']
+
+rule_files:
+  - 'alerts.yml'
+```
+
+Example alert rules (`alerts.yml`):
+
+```yaml
+groups:
+  - name: application
+    interval: 30s
+    rules:
+      - alert: HighErrorRate
+        expr: rate(http_server_requests_seconds_count{status="500"}[5m]) > 0.05
+        for: 5m
+        annotations:
+          summary: "High error rate detected"
+          
+      - alert: HighMemoryUsage
+        expr: jvm_memory_used_bytes{area="heap"} / jvm_memory_max_bytes{area="heap"} > 0.9
+        for: 5m
+        annotations:
+          summary: "JVM heap usage above 90%"
+```
+
+### Health Check Endpoints
+
+```bash
+# Application health
+curl http://localhost:8080/pizza/actuator/health
+
+# Prometheus health
+curl http://localhost:9090/-/healthy
+
+# Grafana health
+curl http://localhost:3001/api/health
+```
+
+### Useful PromQL Queries
+
+```promql
+# Top 5 slowest endpoints
+topk(5, http_server_requests_seconds_sum / http_server_requests_seconds_count)
+
+# Request rate by endpoint
+sum(rate(http_server_requests_seconds_count[5m])) by (uri)
+
+# Database connection pool usage
+hikaricp_connections_active / hikaricp_connections_max
+
+# Redis cache hit rate
+rate(redis_commands_processed_total{cmd="get"}[5m])
 ```
 
 ---
