@@ -6,6 +6,7 @@ import com.example.pizza.constants.order.PaymentStatus;
 import com.example.pizza.dto.address.DeliveryAddressRequest;
 import com.example.pizza.dto.order.OrderCreateRequest;
 import com.example.pizza.dto.order.OrderItemRequest;
+import com.example.pizza.dto.payment.PaymentResponse;
 import com.example.pizza.entity.logic.Payment;
 import com.example.pizza.entity.order.Order;
 import com.example.pizza.entity.order.OrderItem;
@@ -20,10 +21,12 @@ import com.example.pizza.repository.ProductRepository;
 import com.example.pizza.service.logic.EmailService;
 import com.example.pizza.service.user.UserService;
 import com.example.pizza.logic.validator.OrderValidator;
+import com.example.pizza.service.socket.SocketIOService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Isolation;
@@ -47,6 +50,9 @@ public class OrderServiceImpl implements OrderService {
     private final EmailService emailService;
     private final OrderValidator orderValidator;
     private final OrderSearchService orderSearchService;
+    private final SocketIOService socketIOService;
+    private final com.example.pizza.service.payment.IyzicoPaymentService iyzicoPaymentService;
+    private final com.example.pizza.service.PromoCodeService promoCodeService;
 
     // ============================================================================
     // LEGACY READ OPERATIONS (Backward Compatibility)
@@ -56,7 +62,14 @@ public class OrderServiceImpl implements OrderService {
     @Transactional(readOnly = true)
     public List<Order> getAllOrders() {
         log.debug("Fetching all orders with details");
-        return orderRepository.findAllWithDetails();
+        return orderRepository.findAllWithDetails(Sort.by(Sort.Direction.DESC, "orderDate"));
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<Order> getAllOrders(Sort sort) {
+        log.debug("Fetching all orders with details (sorted by: {})", sort);
+        return orderRepository.findAllWithDetails(sort);
     }
 
     @Override
@@ -64,14 +77,29 @@ public class OrderServiceImpl implements OrderService {
     public List<Order> getOrdersByUser(Long userId) {
         User user = userService.getUserById(userId);
         log.debug("Fetching orders for user ID: {}", userId);
-        return orderRepository.findByUserWithDetails(user);
+        return orderRepository.findByUserWithDetails(user, Sort.by(Sort.Direction.DESC, "orderDate"));
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<Order> getOrdersByUser(Long userId, Sort sort) {
+        User user = userService.getUserById(userId);
+        log.debug("Fetching orders for user ID: {} (sorted by: {})", userId, sort);
+        return orderRepository.findByUserWithDetails(user, sort);
     }
 
     @Override
     @Transactional(readOnly = true)
     public List<Order> getOrdersByStatus(OrderStatus status) {
         log.debug("Fetching orders with status: {}", status);
-        return orderRepository.findByOrderStatusWithDetails(status);
+        return orderRepository.findByOrderStatusWithDetails(status, Sort.by(Sort.Direction.DESC, "orderDate"));
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<Order> getOrdersByStatus(OrderStatus status, Sort sort) {
+        log.debug("Fetching orders with status: {} (sorted by: {})", status, sort);
+        return orderRepository.findByOrderStatusWithDetails(status, sort);
     }
 
     @Override
@@ -80,6 +108,22 @@ public class OrderServiceImpl implements OrderService {
         log.debug("Fetching order with ID: {}", id);
         return orderRepository.findByIdWithDetails(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Sipariş bulunamadı: ID " + id));
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Order getOrderByUuid(java.util.UUID uuid) {
+        log.debug("Fetching order with UUID: {}", uuid);
+        return orderRepository.findByUuidWithDetails(uuid)
+                .orElseThrow(() -> new ResourceNotFoundException("Sipariş bulunamadı"));
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Order trackOrder(java.util.UUID uuid) {
+        log.debug("Tracking order with UUID: {}", uuid);
+        return orderRepository.findByUuidWithDetails(uuid)
+                .orElseThrow(() -> new ResourceNotFoundException("Sipariş bulunamadı"));
     }
 
     // ============================================================================
@@ -102,6 +146,11 @@ public class OrderServiceImpl implements OrderService {
             // 4. Process order items with stock validation
             processOrderItems(order, request.getItems());
 
+            // 4.5 Apply Promo Code if exists
+            if (request.getPromoCode() != null && !request.getPromoCode().isEmpty()) {
+                promoCodeService.applyPromoCode(order, request.getPromoCode());
+            }
+
             // 5. Create payment (will be saved via cascade)
             Payment payment = createPayment(order, request.getPaymentMethod());
             order.setPayment(payment);
@@ -109,16 +158,32 @@ public class OrderServiceImpl implements OrderService {
             // 6. Save order (cascade saves payment + items)
             Order savedOrder = orderRepository.save(order);
 
+            // 6.5 Record Promo Code Usage (References saved order)
+            if (savedOrder.getPromoCode() != null) {
+                promoCodeService.recordUsage(savedOrder);
+            }
+
             // 7. Send confirmation email asynchronously
-            scheduleOrderConfirmationEmail(savedOrder);
+            // Online ödeme için maili ödeme başarılı olduktan sonra gönder
+            PaymentMethod paymentMethod = request.getPaymentMethod();
+            if (paymentMethod != PaymentMethod.ONLINE_CREDIT_CARD) {
+                scheduleOrderConfirmationEmail(savedOrder);
+            } else {
+                log.info("Skipping confirmation email for online payment order: {}. " +
+                        "Email will be sent after successful payment.", savedOrder.getId());
+            }
 
             // 8. Index to Elasticsearch
             orderSearchService.indexOrder(savedOrder);
 
-            log.info("Order created successfully: ID={}, Total={}, Items={}",
+            log.info("Order created successfully: ID={}, UUID={}, Total={}, Items={}",
                     savedOrder.getId(),
+                    savedOrder.getUuid(),
                     savedOrder.getTotalAmount(),
                     savedOrder.getItems().size());
+
+            // 9. Emit Real-time event
+            socketIOService.sendOrderCreated(savedOrder);
 
             return savedOrder;
 
@@ -344,17 +409,53 @@ public class OrderServiceImpl implements OrderService {
 
         orderSearchService.indexOrder(updatedOrder);
 
+        // Emit Real-time event
+        socketIOService.sendOrderUpdated(updatedOrder);
+
         log.info("Order {} status updated: {} → {}", id, oldStatus, newStatus);
         return updatedOrder;
     }
 
     @Override
     @Transactional(isolation = Isolation.READ_COMMITTED, rollbackFor = Exception.class)
-    public void cancelOrder(Long id) {
-        log.info("Cancelling order with ID: {}", id);
+    public void cancelOrder(java.util.UUID uuid, User user, String verificationEmail) {
+        log.info("Attempting to cancel order with UUID: {}", uuid);
 
-        Order order = getOrderById(id);
-        User user = order.getUser();
+        Order order = trackOrder(uuid);
+
+        // Security Check
+        boolean isAuthorized = false;
+
+        // 1. Admin/Personal Check
+        if (user != null) {
+            boolean isAdminOrPersonal = user.getAuthorities().stream()
+                    .anyMatch(a -> a.getAuthority().equals("ROLE_ADMIN") ||
+                            a.getAuthority().equals("ROLE_PERSONAL"));
+
+            if (isAdminOrPersonal) {
+                isAuthorized = true;
+            } else if (order.getUser() != null && order.getUser().getId().equals(user.getId())) {
+                // 2. Owner Check (Authenticated)
+                isAuthorized = true;
+            }
+        }
+
+        // 3. Guest/Email Check
+        if (!isAuthorized) {
+            String orderEmail = order.getOrderEmail();
+            if (orderEmail != null && verificationEmail != null && orderEmail.equalsIgnoreCase(verificationEmail)) {
+                isAuthorized = true;
+            }
+        }
+
+        if (!isAuthorized) {
+            log.warn("Unauthorized cancellation attempt for order {}", uuid);
+            throw new org.springframework.security.access.AccessDeniedException("Bu siparişi iptal etme yetkiniz yok");
+        }
+
+        // --- Business Logic ---
+
+        // --- Business Logic ---
 
         if (order.getOrderStatus() == OrderStatus.DELIVERED) {
             throw new IllegalStateException("Teslim edilmiş siparişler iptal edilemez");
@@ -364,21 +465,72 @@ public class OrderServiceImpl implements OrderService {
             throw new IllegalStateException("Sipariş zaten iptal edilmiş");
         }
 
-        if (order.getPayment() != null &&
-                order.getPayment().getPaymentStatus() == PaymentStatus.SUCCESS) {
-            log.info("Order {} has successful payment, marking for refund", id);
-            order.getPayment().setPaymentStatus(PaymentStatus.REFUNDED);
+        // SMART PAYMENT CANCELLATION
+        if (order.getPayment() != null) {
+            smartCancelPayment(order.getPayment());
         }
 
         OrderStatus oldStatus = order.getOrderStatus();
         order.setOrderStatus(OrderStatus.CANCELLED);
         orderRepository.save(order);
 
-        scheduleStatusUpdateEmail(order, user, OrderStatus.CANCELLED);
+        scheduleStatusUpdateEmail(order, order.getUser(), OrderStatus.CANCELLED);
 
         orderSearchService.indexOrder(order);
 
-        log.info("Order {} cancelled successfully (previous status: {})", id, oldStatus);
+        // Emit Real-time event
+        socketIOService.sendOrderUpdated(order);
+
+        log.info("Order {} cancelled successfully (previous status: {})", order.getId(), oldStatus);
+    }
+
+    private void smartCancelPayment(Payment payment) {
+        log.info("Executing smart cancellation for payment: ID={}, Method={}, Status={}",
+                payment.getId(), payment.getPaymentMethod(), payment.getPaymentStatus());
+
+        try {
+            if (payment.getPaymentMethod() == PaymentMethod.ONLINE_CREDIT_CARD) {
+                if (payment.getPaymentStatus() == PaymentStatus.SUCCESS) {
+                    // Try Cancel (Void) first - Works for same day/before settlement
+                    log.info("Attempting Iyzico Cancel (Void) for payment {}", payment.getId());
+                    PaymentResponse cancelResponse = iyzicoPaymentService.cancelPayment(payment.getId());
+
+                    if (!"CANCELLED".equals(cancelResponse.getStatus())) {
+                        log.warn("Cancel failed, attempting Iyzico Refund for payment {}", payment.getId());
+                        // Fallback to Refund - Works for next day/after settlement
+                        PaymentResponse refundResponse = iyzicoPaymentService.refundPayment(
+                                payment.getId(), null, "Order Cancellation");
+
+                        if (!"REFUNDED".equals(refundResponse.getStatus())) {
+                            log.error(
+                                    "Both Cancel and Refund failed for payment {}. Manual Admin intervention required.",
+                                    payment.getId());
+                            // We don't throw exception here to allow Order Cancellation to proceed,
+                            // but we could set a "REFUND_FAILED" status if we had one.
+                            // For now, leave as SUCCESS so Admin sees it needs refund.
+                            // TODO: Add REFUND_FAILED status to enum
+                        }
+                    }
+                }
+            } else if (payment.getPaymentMethod() == PaymentMethod.CASH ||
+                    payment.getPaymentMethod() == PaymentMethod.CREDIT_CARD ||
+                    payment.getPaymentMethod() == PaymentMethod.GIFT_CARD) {
+                // Pay at Door / Offline methods
+                // If payment was never taken (PENDING), just mark as CANCELLED
+                if (payment.getPaymentStatus() == PaymentStatus.PENDING) {
+                    payment.setPaymentStatus(PaymentStatus.CANCELLED);
+                    // No need to call repository, cascading save from Order will handle it, or we
+                    // can explicit save.
+                    // Since we save 'order' later and 'payment' is entity attached, it might work,
+                    // but safer to modify the object that will be saved via cascade or explicitly
+                    // save here if needed.
+                    // The 'order' object holds the reference to 'payment'.
+                }
+            }
+        } catch (Exception e) {
+            log.error("Smart payment cancellation failed for payment {}", payment.getId(), e);
+            // Don't block order cancellation, but log error
+        }
     }
 
     private void validateStatusTransition(OrderStatus oldStatus, OrderStatus newStatus) {

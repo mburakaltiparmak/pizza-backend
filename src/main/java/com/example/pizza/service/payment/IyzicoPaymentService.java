@@ -12,7 +12,7 @@ public interface IyzicoPaymentService {
      * Process direct payment (Non-3DS) - FOR TESTING/SANDBOX ONLY
      * In production, 3DS is mandatory for Turkey
      *
-     * @param orderId Order ID to process payment for
+     * @param orderId     Order ID to process payment for
      * @param cardRequest Card details
      * @return PaymentResponse with result
      */
@@ -22,7 +22,7 @@ public interface IyzicoPaymentService {
      * Initialize 3D Secure payment (PRODUCTION RECOMMENDED)
      * Returns HTML content for 3DS iframe
      *
-     * @param orderId Order ID
+     * @param orderId     Order ID
      * @param cardRequest Card details
      * @param callbackUrl URL to redirect after 3DS verification
      * @return PaymentResponse with threeDsHtmlContent
@@ -30,10 +30,29 @@ public interface IyzicoPaymentService {
     PaymentResponse initThreeDSPayment(Long orderId, PaymentCardRequest cardRequest, String callbackUrl);
 
     /**
+     * Initialize Iyzico Checkout Form (Hosted Payment Page)
+     * Returns script/HTML to render the payment form
+     *
+     * @param orderId     Order ID
+     * @param callbackUrl URL to redirect after payment
+     * @return PaymentResponse with checkoutFormContent
+     */
+    PaymentResponse initCheckoutForm(Long orderId, String callbackUrl);
+
+    /**
+     * Handle Hosted Checkout Form Callback
+     * Retrieve payment result using the token sent by Iyzico
+     *
+     * @param token Payment token
+     * @return PaymentResponse with result
+     */
+    PaymentResponse handleCheckoutCallback(String token);
+
+    /**
      * Handle 3DS callback after user completes authentication
      *
      * @param conversationId Our order ID sent to Iyzico
-     * @param paymentId Iyzico's payment ID from callback
+     * @param paymentId      Iyzico's payment ID from callback
      * @return PaymentResponse with final result
      */
     PaymentResponse handleThreeDSCallback(String conversationId, String paymentId);
@@ -55,11 +74,19 @@ public interface IyzicoPaymentService {
     Payment getPaymentByOrderId(Long orderId);
 
     /**
+     * Get payment by UUID
+     *
+     * @param uuid Payment UUID
+     * @return Payment entity
+     */
+    Payment getPaymentByUuid(String uuid);
+
+    /**
      * Refund payment (Full or Partial)
      *
      * @param paymentId Payment ID to refund
-     * @param amount Amount to refund (null for full refund)
-     * @param reason Refund reason
+     * @param amount    Amount to refund (null for full refund)
+     * @param reason    Refund reason
      * @return PaymentResponse with refund result
      */
     PaymentResponse refundPayment(Long paymentId, BigDecimal amount, String reason);

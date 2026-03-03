@@ -29,4 +29,7 @@ public class CategoryDocument {
 
     @Field(type = FieldType.Date)
     private LocalDate createdAt;
+
+    @Field(type = FieldType.Integer)
+    private int productCount;
 }

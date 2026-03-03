@@ -95,4 +95,27 @@ public interface CategoryRepository extends JpaRepository<Category, Long> {
          */
         @Query("SELECT c FROM Category c WHERE LOWER(c.name) LIKE LOWER(CONCAT('%', :name, '%'))")
         Page<Category> searchByName(@Param("name") String name, Pageable pageable);
+
+        // ============================================================================
+        // DTO PROJECTIONS (Best Practice for Performance)
+        // ============================================================================
+
+        /**
+         * Tüm kategorileri ürün sayısıyla birlikte getir (N+1 Safe)
+         * DTO Projection kullanarak doğrudan DB'den count alır.
+         */
+        @Query("SELECT new com.example.pizza.dto.category.CategoryResponse(" +
+                        "c.id, c.name, c.img, CAST(COUNT(p) as int)) " +
+                        "FROM Category c LEFT JOIN c.products p " +
+                        "GROUP BY c.id, c.name, c.img")
+        List<com.example.pizza.dto.category.CategoryResponse> findAllWithProductCount();
+
+        /**
+         * Kategorileri ürün sayısıyla birlikte sayfalı getir (N+1 Safe)
+         */
+        @Query(value = "SELECT new com.example.pizza.dto.category.CategoryResponse(" +
+                        "c.id, c.name, c.img, CAST(COUNT(p) as int)) " +
+                        "FROM Category c LEFT JOIN c.products p " +
+                        "GROUP BY c.id, c.name, c.img", countQuery = "SELECT COUNT(c) FROM Category c")
+        Page<com.example.pizza.dto.category.CategoryResponse> findAllWithProductCount(Pageable pageable);
 }

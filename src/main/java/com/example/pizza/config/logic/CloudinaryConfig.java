@@ -3,6 +3,7 @@ package com.example.pizza.config.logic;
 import com.cloudinary.Cloudinary;
 import com.cloudinary.api.ApiResponse;
 import com.cloudinary.utils.ObjectUtils;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -10,6 +11,7 @@ import org.springframework.context.annotation.Configuration;
 import java.util.HashMap;
 import java.util.Map;
 
+@Slf4j
 @Configuration
 public class CloudinaryConfig {
     @Value("${cloudinary.cloud-name:${CLOUD_NAME:dqjqkgpt3}}")
@@ -33,9 +35,9 @@ public class CloudinaryConfig {
         // Cloudinary bağlantısını test et
         try {
             ApiResponse apiResponse = cloudinary.api().createFolder("pizza", ObjectUtils.emptyMap());
-            System.out.println("Cloudinary bağlantısı başarılı: " + apiResponse);
+            log.info("Cloudinary bağlantısı başarılı: {}", apiResponse);
         } catch (Exception e) {
-            System.err.println("Cloudinary bağlantısı başarısız: " + e.getMessage());
+            log.error("Cloudinary bağlantısı başarısız: {}", e.getMessage());
             throw new RuntimeException("Cloudinary yapılandırması başarısız oldu", e);
         }
 

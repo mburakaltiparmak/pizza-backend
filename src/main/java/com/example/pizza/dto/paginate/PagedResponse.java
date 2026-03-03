@@ -1,6 +1,5 @@
 package com.example.pizza.dto.paginate;
 
-import com.example.pizza.dto.order.OrderResponse;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -21,7 +20,17 @@ public class PagedResponse<T> implements Serializable {
     private PageMetadata page;
     private SortMetadata sort;
 
-    public PagedResponse(List<OrderResponse> content, int number, int size, long totalElements, int totalPages, boolean last) {
+    public PagedResponse(List<T> content, int number, int size, long totalElements, int totalPages, boolean last) {
+        this.content = content;
+        this.page = PageMetadata.builder()
+                .number(number)
+                .size(size)
+                .totalElements(totalElements)
+                .totalPages(totalPages)
+                .last(last)
+                .build();
+        // Sort null default
+        this.sort = null;
     }
 
     public static <T> PagedResponse<T> of(Page<T> page) {

@@ -31,13 +31,21 @@ public class CorsConfig {
         // Parse comma-separated origins from environment variable
         configuration.setAllowedOrigins(Arrays.asList(allowedOrigins.split(",")));
 
-        configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "OPTIONS"));
+        configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(Arrays.asList("Authorization", "Content-Type", "X-Requested-With", "Accept"));
         configuration.setExposedHeaders(Arrays.asList("Authorization", "Content-Disposition"));
         configuration.setAllowCredentials(true);
         configuration.setMaxAge(3600L);
 
+        // Specific config for 3DS Callback (Public, from external payment gateway)
+        CorsConfiguration callbackConfig = new CorsConfiguration();
+        callbackConfig.setAllowedOriginPatterns(Arrays.asList("*"));
+        callbackConfig.setAllowedMethods(Arrays.asList("POST", "OPTIONS"));
+        callbackConfig.setAllowedHeaders(Arrays.asList("*"));
+        callbackConfig.setAllowCredentials(false);
+
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+        source.registerCorsConfiguration("/api/payment/3ds/**", callbackConfig);
         source.registerCorsConfiguration("/**", configuration);
         return source;
     }

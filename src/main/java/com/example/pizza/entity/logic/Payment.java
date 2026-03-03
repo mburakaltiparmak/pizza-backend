@@ -22,6 +22,16 @@ public class Payment {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    @Column(name = "uuid", unique = true, nullable = false, updatable = false)
+    private String uuid;
+
+    @PrePersist
+    public void generateUuid() {
+        if (this.uuid == null) {
+            this.uuid = java.util.UUID.randomUUID().toString();
+        }
+    }
+
     @OneToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "order_id", nullable = false, unique = true)
     @JsonBackReference(value = "order-payment")
@@ -94,6 +104,9 @@ public class Payment {
 
     @Column(name = "three_ds_html_content", columnDefinition = "TEXT")
     private String threeDsHtmlContent;
+
+    @Column(name = "iyzico_token", length = 255)
+    private String iyzicoToken;
 
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt = LocalDateTime.now();

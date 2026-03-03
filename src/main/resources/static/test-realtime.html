@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pizza App - RealRequest Test</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/2.3.0/socket.io.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #f3f4f6; padding: 20px; }
+        .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-bottom: 20px; }
+        .log { background: #1f2937; color: #10b981; padding: 10px; border-radius: 6px; font-family: monospace; height: 300px; overflow-y: auto; text-align: left;}
+        .error { color: #ef4444; }
+    </style>
+</head>
+<body>
+
+    <div class="max-w-4xl mx-auto">
+        <h1 class="text-3xl font-bold mb-6 text-gray-800">🍕 Pizza Backend Feature Test</h1>
+
+        <!-- SOCKET.IO SECTION -->
+        <div class="card">
+            <h2 class="text-xl font-semibold mb-4 border-b pb-2">📡 1. Real-Time Socket.IO (Port 9092)</h2>
+            <div class="flex gap-4 mb-4">
+                <div id="status" class="px-3 py-1 bg-red-100 text-red-700 rounded-full text-sm font-medium">Disconnected</div>
+            </div>
+            <p class="text-sm text-gray-500 mb-2">Listening for events: <code>order_created</code>, <code>order_updated</code></p>
+            <div id="socket-log" class="log">
+                <div>Waiting for events...</div>
+            </div>
+        </div>
+
+        <!-- REFUND SECTION -->
+        <div class="card">
+            <h2 class="text-xl font-semibold mb-4 border-b pb-2">💸 2. Refund API Test (Port 8080)</h2>
+            
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Payment ID</label>
+                    <input type="number" id="paymentId" placeholder="Enter Payment ID" class="w-full border p-2 rounded focus:ring-2 focus:ring-blue-500 outline-none">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Action</label>
+                    <button onclick="requestRefund()" class="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded shadow transition w-full">
+                        Request Refund
+                    </button>
+                </div>
+            </div>
+            <div id="refund-result" class="mt-4 p-4 bg-gray-50 rounded hidden"></div>
+        </div>
+    </div>
+
+    <script>
+        // ==========================================
+        // SOCKET.IO LOGIC
+        // ==========================================
+        const socket = io('http://localhost:9092');
+        const statusEl = document.getElementById('status');
+        const logEl = document.getElementById('socket-log');
+
+        function appendLog(msg, isError = false) {
+            const div = document.createElement('div');
+            div.className = isError ? 'error' : '';
+            div.innerText = `[${new Date().toLocaleTimeString()}] ${msg}`;
+            logEl.appendChild(div);
+            logEl.scrollTop = logEl.scrollHeight;
+        }
+
+        socket.on('connect', () => {
+            statusEl.innerText = 'Connected ✅';
+            statusEl.className = 'px-3 py-1 bg-green-100 text-green-700 rounded-full text-sm font-medium';
+            appendLog('Socket connected successfully!');
+        });
+
+        socket.on('disconnect', () => {
+            statusEl.innerText = 'Disconnected ❌';
+            statusEl.className = 'px-3 py-1 bg-red-100 text-red-700 rounded-full text-sm font-medium';
+            appendLog('Socket disconnected.', true);
+        });
+
+        socket.on('order_created', (data) => {
+            console.log('Order Created:', data);
+            appendLog(`🆕 NEW ORDER RECEIVED: ID=${data.id}, Amount=${data.totalAmount} TL`);
+            appendLog(JSON.stringify(data, null, 2));
+        });
+
+        socket.on('order_updated', (data) => {
+            console.log('Order Updated:', data);
+            appendLog(`🔄 ORDER UPDATED: ID=${data.id}, Status=${data.orderStatus}`);
+        });
+
+        // ==========================================
+        // REFUND LOGIC
+        // ==========================================
+        async function requestRefund() {
+            const paymentId = document.getElementById('paymentId').value;
+            const resultEl = document.getElementById('refund-result');
+            
+            if (!paymentId) {
+                alert('Please enter a Payment ID');
+                return;
+            }
+
+            resultEl.classList.remove('hidden');
+            resultEl.innerHTML = '<span class="text-gray-500">Processing refund...</span>';
+
+            try {
+                // Assuming we don't need auth for this quick test OR we assume user has logged in via another tab?
+                // Actually Refund endpoint is typically secured. 
+                // "RefundController" has @PreAuthorize("hasRole('ADMIN')")
+                // This will FAIL if not authenticated.
+                
+                // For this test page to work, we need a standard login flow or just disable security for this endpoint temporarily?
+                // Or provide a Token Input field.
+                
+                // Let's add a Token Input field.
+                const token = prompt("Enter Bearer Token (Login as Admin first via Swagger):");
+                if(!token) {
+                    resultEl.innerHTML = '<span class="text-red-500">Token required!</span>';
+                    return;
+                }
+
+                const response = await fetch(`http://localhost:8080/api/payment/${paymentId}/refund`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    }
+                });
+
+                const data = await response.json();
+                
+                if (response.ok) {
+                    resultEl.innerHTML = `
+                        <div class="text-green-600 font-bold mb-2">Success!</div>
+                        <pre class="text-xs bg-gray-100 p-2 rounded overflow-auto">${JSON.stringify(data, null, 2)}</pre>
+                    `;
+                    appendLog(`💰 Refund success for Payment ${paymentId}`);
+                } else {
+                    resultEl.innerHTML = `
+                        <div class="text-red-600 font-bold mb-2">Error (${response.status})</div>
+                        <div class="text-sm">${data.message || JSON.stringify(data)}</div>
+                    `;
+                    appendLog(`❌ Refund failed for Payment ${paymentId}`, true);
+                }
+
+            } catch (error) {
+                resultEl.innerHTML = `<div class="text-red-600">Network Error: ${error.message}</div>`;
+            }
+        }
+    </script>
+</body>
+</html>

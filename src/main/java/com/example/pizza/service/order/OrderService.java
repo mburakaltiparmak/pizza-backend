@@ -11,6 +11,7 @@ import com.example.pizza.exceptions.order.InsufficientStockException;
 import com.example.pizza.exceptions.order.OrderCreationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -18,12 +19,25 @@ import java.util.List;
 public interface OrderService {
 
     // ============================================================================
-    // READ OPERATIONS (Non-paginated)
+    // READ OPERATIONS (Non-paginated with Sort support)
     // ============================================================================
     List<Order> getAllOrders();
+
+    List<Order> getAllOrders(Sort sort);
+
     List<Order> getOrdersByUser(Long userId);
+
+    List<Order> getOrdersByUser(Long userId, Sort sort);
+
     List<Order> getOrdersByStatus(OrderStatus status);
+
+    List<Order> getOrdersByStatus(OrderStatus status, Sort sort);
+
     Order getOrderById(Long id);
+
+    Order getOrderByUuid(java.util.UUID uuid);
+
+    Order trackOrder(java.util.UUID uuid);
 
     // ============================================================================
     // CREATE OPERATION
@@ -34,7 +48,8 @@ public interface OrderService {
     // UPDATE OPERATIONS
     // ============================================================================
     Order updateOrderStatus(Long orderId, OrderStatus newStatus);
-    void cancelOrder(Long orderId);
+
+    void cancelOrder(java.util.UUID uuid, User user, String verificationEmail);
 
     // ============================================================================
     // PAYMENT OPERATIONS
@@ -45,8 +60,12 @@ public interface OrderService {
     // READ OPERATIONS (Paginated)
     // ============================================================================
     Page<Order> getAllOrders(Pageable pageable);
+
     Page<Order> getOrdersByUser(Long userId, Pageable pageable);
+
     Page<Order> getOrdersByStatus(OrderStatus status, Pageable pageable);
+
     Page<Order> getOrdersBetweenDates(LocalDateTime startDate, LocalDateTime endDate, Pageable pageable);
+
     Page<Order> getOrdersByPriceRange(Double minPrice, Double maxPrice, Pageable pageable);
 }

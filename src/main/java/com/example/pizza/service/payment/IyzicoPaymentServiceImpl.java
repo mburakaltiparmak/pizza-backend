@@ -12,18 +12,22 @@ import com.example.pizza.entity.user.User;
 import com.example.pizza.exceptions.common.ResourceNotFoundException;
 import com.example.pizza.repository.OrderRepository;
 import com.example.pizza.repository.PaymentRepository;
+import com.example.pizza.service.logic.EmailService; // [NEW] Email service for payment confirmation
 import com.iyzipay.Options;
 import com.iyzipay.model.*;
 import com.iyzipay.request.CreateCancelRequest;
 import com.iyzipay.request.CreatePaymentRequest;
 import com.iyzipay.request.CreateRefundRequest;
 import com.iyzipay.request.CreateThreedsPaymentRequest;
+import com.iyzipay.request.CreateCheckoutFormInitializeRequest;
+import com.iyzipay.model.CheckoutFormInitialize;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode; // [NEW] For discount distribution
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -37,6 +41,7 @@ public class IyzicoPaymentServiceImpl implements IyzicoPaymentService {
     private final IyzicoConfig iyzicoConfig;
     private final PaymentRepository paymentRepository;
     private final OrderRepository orderRepository;
+    private final EmailService emailService; // [NEW] For sending confirmation email after successful payment
 
     // =========================================================================
     // PUBLIC API METHODS
@@ -55,8 +60,7 @@ public class IyzicoPaymentServiceImpl implements IyzicoPaymentService {
             CreatePaymentRequest request = buildPaymentRequest(order, cardRequest);
 
             // Call Iyzico API
-            com.iyzipay.model.Payment iyzicoPayment =
-                    com.iyzipay.model.Payment.create(request, iyzicoOptions);
+            com.iyzipay.model.Payment iyzicoPayment = com.iyzipay.model.Payment.create(request, iyzicoOptions);
 
             // Handle response
             return handlePaymentResult(payment, order, iyzicoPayment);
@@ -81,8 +85,7 @@ public class IyzicoPaymentServiceImpl implements IyzicoPaymentService {
             request.setCallbackUrl(callbackUrl != null ? callbackUrl : iyzicoConfig.getCallbackUrl());
 
             // Call Iyzico 3DS Init API
-            ThreedsInitialize threedsInitialize =
-                    ThreedsInitialize.create(request, iyzicoOptions);
+            ThreedsInitialize threedsInitialize = ThreedsInitialize.create(request, iyzicoOptions);
 
             if ("success".equals(threedsInitialize.getStatus())) {
                 // Save 3DS pending state
@@ -96,10 +99,12 @@ public class IyzicoPaymentServiceImpl implements IyzicoPaymentService {
                 return PaymentResponse.builder()
                         .paymentId(payment.getId())
                         .id(payment.getId())
+                        .uuid(payment.getUuid())
                         .status("PENDING_3DS")
                         .paymentStatus(PaymentStatus.PENDING_3DS)
                         .threeDsHtmlContent(threedsInitialize.getHtmlContent())
                         .amount(payment.getAmount())
+                        .orderUuid(order.getUuid())
                         .build();
             } else {
                 String errorMsg = threedsInitialize.getErrorMessage() != null
@@ -116,6 +121,95 @@ public class IyzicoPaymentServiceImpl implements IyzicoPaymentService {
 
     @Override
     @Transactional
+    public PaymentResponse initCheckoutForm(Long orderId, String callbackUrl) {
+        log.info("Initializing Checkout Form for order: {}", orderId);
+
+        Order order = getOrderOrThrow(orderId);
+        Payment payment = getOrCreatePayment(order);
+
+        try {
+            // Build Checkout Form Request
+            CreateCheckoutFormInitializeRequest request = buildCheckoutFormRequest(order, callbackUrl);
+
+            // Call Iyzico API
+            CheckoutFormInitialize checkoutFormInitialize = CheckoutFormInitialize.create(request, iyzicoOptions);
+
+            if ("success".equals(checkoutFormInitialize.getStatus())) {
+                // Save pending state
+                payment.setPaymentStatus(PaymentStatus.PENDING);
+                payment.setIyzicoConversationId(orderId.toString());
+                payment.setIyzicoToken(checkoutFormInitialize.getToken());
+                payment.setThreeDsHtmlContent(checkoutFormInitialize.getCheckoutFormContent());
+                paymentRepository.save(payment);
+
+                log.info("Checkout Form initialized for order: {}", orderId);
+
+                return PaymentResponse.builder()
+                        .paymentId(payment.getId())
+                        .id(payment.getId())
+                        .uuid(payment.getUuid())
+                        .status("PENDING_CHECKOUT")
+                        .paymentStatus(PaymentStatus.PENDING)
+                        .threeDsHtmlContent(checkoutFormInitialize.getCheckoutFormContent())
+                        .checkoutFormContent(checkoutFormInitialize.getCheckoutFormContent())
+                        .token(checkoutFormInitialize.getToken())
+                        .paymentPageUrl(checkoutFormInitialize.getPaymentPageUrl())
+                        .amount(payment.getAmount())
+                        .orderUuid(order.getUuid())
+                        .build();
+            } else {
+                String errorMsg = checkoutFormInitialize.getErrorMessage() != null
+                        ? checkoutFormInitialize.getErrorMessage()
+                        : "Ödeme formu oluşturulamadı";
+                return handlePaymentFailure(payment, errorMsg);
+            }
+
+        } catch (Exception e) {
+            log.error("Checkout Form init failed for order: {}", orderId, e);
+            return handlePaymentFailure(payment, "Ödeme formu hata: " + e.getMessage());
+        }
+    }
+
+    @Override
+    @Transactional
+    public PaymentResponse handleCheckoutCallback(String token) {
+        log.info("Processing Checkout Form callback for token: {}", token);
+
+        try {
+            // Retrieve checkout form result
+            com.iyzipay.request.RetrieveCheckoutFormRequest request = new com.iyzipay.request.RetrieveCheckoutFormRequest();
+            request.setLocale(Locale.TR.getValue());
+            request.setConversationId("CHECKOUT_" + token);
+            request.setToken(token);
+
+            com.iyzipay.model.CheckoutForm checkoutForm = com.iyzipay.model.CheckoutForm.retrieve(request,
+                    iyzicoOptions);
+
+            // Validate retrieval
+            if (!"success".equals(checkoutForm.getStatus())) {
+                return PaymentResponse.builder()
+                        .status("FAILED")
+                        .errorMessage("Ödeme sonucu sorgulanamadı: " + checkoutForm.getErrorMessage())
+                        .build();
+            }
+
+            // Find payment by token from DB
+            Payment payment = paymentRepository.findByIyzicoToken(token)
+                    .orElseThrow(() -> new ResourceNotFoundException("Bu token ile ödeme bulunamadı: " + token));
+
+            Order order = payment.getOrder();
+
+            // Handle result (same as Direct Payment / 3DS)
+            return handlePaymentResult(payment, order, checkoutForm);
+
+        } catch (Exception e) {
+            log.error("Checkout callback handling failed", e);
+            throw new RuntimeException("Ödeme sonucu işlenemedi: " + e.getMessage());
+        }
+    }
+
+    @Override
+    @Transactional
     public PaymentResponse handleThreeDSCallback(String conversationId, String paymentId) {
         log.info("Processing 3DS callback for conversation: {}, payment: {}", conversationId, paymentId);
 
@@ -127,8 +221,7 @@ public class IyzicoPaymentServiceImpl implements IyzicoPaymentService {
             request.setPaymentId(paymentId);
 
             // Call Iyzico to complete 3DS payment
-            ThreedsPayment threedsPayment =
-                    ThreedsPayment.create(request, iyzicoOptions);
+            ThreedsPayment threedsPayment = ThreedsPayment.create(request, iyzicoOptions);
 
             // Find payment by conversation ID (our order ID)
             Long orderId = Long.parseLong(conversationId);
@@ -162,6 +255,13 @@ public class IyzicoPaymentServiceImpl implements IyzicoPaymentService {
     }
 
     @Override
+    @Transactional(readOnly = true)
+    public Payment getPaymentByUuid(String uuid) {
+        return paymentRepository.findByUuid(uuid)
+                .orElseThrow(() -> new ResourceNotFoundException("Ödeme bulunamadı (UUID): " + uuid));
+    }
+
+    @Override
     @Transactional
     public PaymentResponse refundPayment(Long paymentId, BigDecimal amount, String reason) {
         log.info("Processing refund for payment: {}, amount: {}", paymentId, amount);
@@ -173,6 +273,7 @@ public class IyzicoPaymentServiceImpl implements IyzicoPaymentService {
                     .paymentId(paymentId)
                     .status("FAILED")
                     .errorMessage("Sadece başarılı ödemeler iade edilebilir")
+                    .orderUuid(payment.getOrder().getUuid())
                     .build();
         }
 
@@ -197,15 +298,18 @@ public class IyzicoPaymentServiceImpl implements IyzicoPaymentService {
                 return PaymentResponse.builder()
                         .paymentId(paymentId)
                         .id(payment.getId())
+                        .uuid(payment.getUuid())
                         .status("REFUNDED")
                         .paymentStatus(PaymentStatus.REFUNDED)
                         .amount(payment.getAmount())
+                        .orderUuid(payment.getOrder().getUuid())
                         .build();
             } else {
                 return PaymentResponse.builder()
                         .paymentId(paymentId)
                         .status("FAILED")
                         .errorMessage(refund.getErrorMessage())
+                        .orderUuid(payment.getOrder().getUuid())
                         .build();
             }
 
@@ -215,6 +319,7 @@ public class IyzicoPaymentServiceImpl implements IyzicoPaymentService {
                     .paymentId(paymentId)
                     .status("FAILED")
                     .errorMessage("İade işlemi başarısız: " + e.getMessage())
+                    .orderUuid(payment.getOrder().getUuid())
                     .build();
         }
     }
@@ -231,6 +336,7 @@ public class IyzicoPaymentServiceImpl implements IyzicoPaymentService {
                     .paymentId(paymentId)
                     .status("FAILED")
                     .errorMessage("Sadece başarılı ödemeler iptal edilebilir")
+                    .orderUuid(payment.getOrder().getUuid())
                     .build();
         }
 
@@ -257,14 +363,17 @@ public class IyzicoPaymentServiceImpl implements IyzicoPaymentService {
                 return PaymentResponse.builder()
                         .paymentId(paymentId)
                         .id(payment.getId())
+                        .uuid(payment.getUuid())
                         .status("CANCELLED")
                         .paymentStatus(PaymentStatus.CANCELLED)
+                        .orderUuid(order.getUuid())
                         .build();
             } else {
                 return PaymentResponse.builder()
                         .paymentId(paymentId)
                         .status("FAILED")
                         .errorMessage(cancel.getErrorMessage())
+                        .orderUuid(payment.getOrder().getUuid())
                         .build();
             }
 
@@ -274,6 +383,7 @@ public class IyzicoPaymentServiceImpl implements IyzicoPaymentService {
                     .paymentId(paymentId)
                     .status("FAILED")
                     .errorMessage("İptal işlemi başarısız: " + e.getMessage())
+                    .orderUuid(payment.getOrder().getUuid())
                     .build();
         }
     }
@@ -322,6 +432,37 @@ public class IyzicoPaymentServiceImpl implements IyzicoPaymentService {
         return request;
     }
 
+    private CreateCheckoutFormInitializeRequest buildCheckoutFormRequest(Order order, String callbackUrl) {
+        CreateCheckoutFormInitializeRequest request = new CreateCheckoutFormInitializeRequest();
+
+        request.setLocale(Locale.TR.getValue());
+        request.setConversationId(order.getId().toString());
+        request.setPrice(BigDecimal.valueOf(order.getTotalAmount()));
+        request.setPaidPrice(BigDecimal.valueOf(order.getTotalAmount()));
+        request.setCurrency(Currency.TRY.name());
+        request.setBasketId("BASKET_" + order.getId());
+        request.setPaymentGroup(PaymentGroup.PRODUCT.name());
+
+        // This is where Iyzico will redirect after payment
+        request.setCallbackUrl(callbackUrl != null ? callbackUrl : iyzicoConfig.getCallbackUrl());
+
+        // Buyer info
+        Buyer buyer = buildBuyer(order);
+        request.setBuyer(buyer);
+
+        // Addresses
+        Address shippingAddress = buildAddress(order);
+        Address billingAddress = buildAddress(order);
+        request.setShippingAddress(shippingAddress);
+        request.setBillingAddress(billingAddress);
+
+        // Basket items
+        List<BasketItem> basketItems = buildBasketItems(order);
+        request.setBasketItems(basketItems);
+
+        return request;
+    }
+
     private Buyer buildBuyer(Order order) {
         Buyer buyer = new Buyer();
         User user = order.getUser();
@@ -337,36 +478,32 @@ public class IyzicoPaymentServiceImpl implements IyzicoPaymentService {
         } else {
             // Guest user
             buyer.setId("GUEST_" + order.getId());
-            String guestName = order.getDeliveryAddress() != null && order.getDeliveryAddress().getRecipientName() != null
-                    ? order.getDeliveryAddress().getRecipientName()
-                    : "Guest";
+            String guestName = order.getDeliveryAddress() != null
+                    && order.getDeliveryAddress().getRecipientName() != null
+                            ? order.getDeliveryAddress().getRecipientName()
+                            : "Guest";
             buyer.setName(guestName.contains(" ") ? guestName.split(" ")[0] : guestName);
             buyer.setSurname(guestName.contains(" ") ? guestName.split(" ")[1] : "User");
-            buyer.setEmail(order.getGuestEmail() != null ? order.getGuestEmail() : "guest@example.com");
+            buyer.setEmail(order.getGuestEmail() != null ? order.getGuestEmail() : "guest@teknolojik-yemekler.com");
             buyer.setGsmNumber(order.getDeliveryAddress() != null && order.getDeliveryAddress().getPhoneNumber() != null
                     ? order.getDeliveryAddress().getPhoneNumber()
                     : "+905350000000");
             buyer.setIdentityNumber("11111111111");
         }
 
-        // Address info
-        if (order.getDeliveryAddress() != null) {
-            buyer.setRegistrationAddress(order.getDeliveryAddress().getFullAddress());
-            buyer.setCity(order.getDeliveryAddress().getCity() != null
-                    ? order.getDeliveryAddress().getCity()
-                    : "Istanbul");
-            buyer.setCountry("Turkey");
-            buyer.setZipCode(order.getDeliveryAddress().getPostalCode() != null
-                    ? order.getDeliveryAddress().getPostalCode()
-                    : "34000");
-        } else {
-            buyer.setRegistrationAddress("Default Address");
-            buyer.setCity("Istanbul");
-            buyer.setCountry("Turkey");
-            buyer.setZipCode("34000");
-        }
-
-        buyer.setIp("85.34.78.112"); // Client IP placeholder
+        // Common fields
+        buyer.setRegistrationAddress(
+                order.getDeliveryAddress() != null && order.getDeliveryAddress().getFullAddress() != null
+                        ? order.getDeliveryAddress().getFullAddress()
+                        : "Default Address");
+        buyer.setIp("85.34.78.112");
+        buyer.setCity(order.getDeliveryAddress() != null && order.getDeliveryAddress().getCity() != null
+                ? order.getDeliveryAddress().getCity()
+                : "Istanbul");
+        buyer.setCountry("Turkey");
+        buyer.setZipCode(order.getDeliveryAddress() != null && order.getDeliveryAddress().getPostalCode() != null
+                ? order.getDeliveryAddress().getPostalCode()
+                : "34000");
 
         return buyer;
     }
@@ -400,13 +537,16 @@ public class IyzicoPaymentServiceImpl implements IyzicoPaymentService {
         return address;
     }
 
+    // [FIX] Promo code indirimi basket item'lara orantılı dağıtılıyor
+    // Iyzico kuralı: price == sum(basketItems.price) olmalı
     private List<BasketItem> buildBasketItems(Order order) {
         List<BasketItem> basketItems = new ArrayList<>();
 
         if (order.getItems() != null && !order.getItems().isEmpty()) {
             for (OrderItem item : order.getItems()) {
                 BasketItem basketItem = new BasketItem();
-                basketItem.setId(item.getProduct() != null ? item.getProduct().getId().toString() : "ITEM_" + item.getId());
+                basketItem.setId(
+                        item.getProduct() != null ? item.getProduct().getId().toString() : "ITEM_" + item.getId());
                 basketItem.setName(item.getProduct() != null ? item.getProduct().getName() : "Product");
                 basketItem.setCategory1(item.getProduct() != null && item.getProduct().getCategory() != null
                         ? item.getProduct().getCategory().getName()
@@ -420,8 +560,46 @@ public class IyzicoPaymentServiceImpl implements IyzicoPaymentService {
 
                 basketItems.add(basketItem);
             }
+
+            // ================================================================
+            // Promo code indirimi varsa, item'lara orantılı olarak dağıt
+            // order.totalAmount zaten indirimli, ama item fiyatları orijinal
+            // ================================================================
+            if (order.getDiscountAmount() > 0 && !basketItems.isEmpty()) {
+                BigDecimal discount = BigDecimal.valueOf(order.getDiscountAmount());
+
+                BigDecimal itemsTotal = basketItems.stream()
+                        .map(BasketItem::getPrice)
+                        .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+                if (itemsTotal.compareTo(BigDecimal.ZERO) > 0) {
+                    BigDecimal distributedDiscount = BigDecimal.ZERO;
+
+                    for (int i = 0; i < basketItems.size(); i++) {
+                        BasketItem bi = basketItems.get(i);
+                        BigDecimal itemDiscount;
+
+                        if (i == basketItems.size() - 1) {
+                            // Son item'a kalan indirimi ver (yuvarlama farkını önler)
+                            itemDiscount = discount.subtract(distributedDiscount);
+                        } else {
+                            // Orantılı indirim: (itemPrice / itemsTotal) * discount
+                            itemDiscount = bi.getPrice()
+                                    .divide(itemsTotal, 10, RoundingMode.HALF_UP)
+                                    .multiply(discount)
+                                    .setScale(2, RoundingMode.HALF_UP);
+                            distributedDiscount = distributedDiscount.add(itemDiscount);
+                        }
+
+                        bi.setPrice(bi.getPrice().subtract(itemDiscount));
+                    }
+
+                    log.debug("Discount {} distributed across {} basket items. Items total before: {}, after: {}",
+                            discount, basketItems.size(), itemsTotal, itemsTotal.subtract(discount));
+                }
+            }
         } else {
-            // Fallback - single item with total amount
+            // Fallback - single item with total amount (zaten indirimli)
             BasketItem basketItem = new BasketItem();
             basketItem.setId("ORDER_" + order.getId());
             basketItem.setName("Sipariş #" + order.getId());
@@ -440,7 +618,68 @@ public class IyzicoPaymentServiceImpl implements IyzicoPaymentService {
     // =========================================================================
 
     private PaymentResponse handlePaymentResult(Payment payment, Order order,
-                                                com.iyzipay.model.Payment iyzicoPayment) {
+            com.iyzipay.model.CheckoutForm checkoutForm) {
+        log.info("Handling payment result for Order ID: {}, UUID: {}", order.getId(), order.getUuid());
+        if ("success".equals(checkoutForm.getStatus())) {
+            // Payment successful - update entities
+            payment.setPaymentStatus(PaymentStatus.SUCCESS);
+            payment.setIyzicoPaymentId(checkoutForm.getPaymentId());
+            payment.setIyzicoConversationId(checkoutForm.getConversationId());
+            payment.setAuthCode(checkoutForm.getAuthCode());
+            payment.setCardAssociation(checkoutForm.getCardAssociation());
+            payment.setCardFamily(checkoutForm.getCardFamily());
+            payment.setCardBinNumber(checkoutForm.getBinNumber());
+            payment.setCardLastFour(checkoutForm.getLastFourDigits());
+            payment.setFraudStatus(checkoutForm.getFraudStatus());
+            payment.setInstallment(checkoutForm.getInstallment());
+            payment.setTransactionId(checkoutForm.getPaymentId());
+
+            payment.setCompletedAt(LocalDateTime.now());
+
+            // Update order status
+            order.setOrderStatus(OrderStatus.CONFIRMED);
+
+            // Save
+            paymentRepository.save(payment);
+            orderRepository.save(order);
+
+            log.info("Checkout payment successful for order: {}, paymentId: {}",
+                    order.getId(), checkoutForm.getPaymentId());
+
+            // [NEW] Send confirmation email now that payment is confirmed
+            sendPaymentConfirmationEmail(order);
+
+            BigDecimal paidAmount = checkoutForm.getPaidPrice() != null
+                    ? checkoutForm.getPaidPrice()
+                    : payment.getAmount();
+
+            return PaymentResponse.builder()
+                    .paymentId(payment.getId())
+                    .id(payment.getId())
+                    .uuid(payment.getUuid())
+                    .status("SUCCESS")
+                    .paymentStatus(PaymentStatus.SUCCESS)
+                    .iyzicoPaymentId(checkoutForm.getPaymentId())
+                    .iyzicoConversationId(checkoutForm.getConversationId())
+                    .transactionId(checkoutForm.getPaymentId())
+                    .authCode(checkoutForm.getAuthCode())
+                    .amount(payment.getAmount())
+                    .paidAmount(paidAmount)
+                    .currency("TRY")
+                    .cardAssociation(checkoutForm.getCardAssociation())
+                    .cardFamily(checkoutForm.getCardFamily())
+                    .cardLastFour(checkoutForm.getLastFourDigits())
+                    .installment(checkoutForm.getInstallment())
+                    .completedAt(payment.getCompletedAt())
+                    .orderUuid(order.getUuid())
+                    .build();
+        } else {
+            return handlePaymentFailure(payment, checkoutForm.getErrorMessage());
+        }
+    }
+
+    private PaymentResponse handlePaymentResult(Payment payment, Order order,
+            com.iyzipay.model.Payment iyzicoPayment) {
         if ("success".equals(iyzicoPayment.getStatus())) {
             // Payment successful - update entities
             payment.setPaymentStatus(PaymentStatus.SUCCESS);
@@ -491,16 +730,22 @@ public class IyzicoPaymentServiceImpl implements IyzicoPaymentService {
             log.info("Payment successful for order: {}, paymentId: {}",
                     order.getId(), iyzicoPayment.getPaymentId());
 
+            // [NEW] Send confirmation email now that payment is confirmed
+            sendPaymentConfirmationEmail(order);
+
             return PaymentResponse.builder()
                     .paymentId(payment.getId())
                     .id(payment.getId())
+                    .uuid(payment.getUuid())
                     .status("SUCCESS")
                     .paymentStatus(PaymentStatus.SUCCESS)
                     .iyzicoPaymentId(iyzicoPayment.getPaymentId())
+                    .iyzicoConversationId(iyzicoPayment.getConversationId())
                     .transactionId(iyzicoPayment.getPaymentId())
                     .authCode(iyzicoPayment.getAuthCode())
                     .amount(payment.getAmount())
-                    .paidAmount(iyzicoPayment.getPaidPrice() != null ? iyzicoPayment.getPaidPrice() : payment.getAmount())
+                    .paidAmount(
+                            iyzicoPayment.getPaidPrice() != null ? iyzicoPayment.getPaidPrice() : payment.getAmount())
                     .merchantPayoutAmount(totalPayout)
                     .currency("TRY")
                     .cardAssociation(iyzicoPayment.getCardAssociation())
@@ -508,6 +753,7 @@ public class IyzicoPaymentServiceImpl implements IyzicoPaymentService {
                     .cardLastFour(iyzicoPayment.getLastFourDigits())
                     .installment(iyzicoPayment.getInstallment())
                     .completedAt(payment.getCompletedAt())
+                    .orderUuid(order.getUuid())
                     .build();
         } else {
             return handlePaymentFailure(payment, iyzicoPayment.getErrorMessage());
@@ -515,7 +761,7 @@ public class IyzicoPaymentServiceImpl implements IyzicoPaymentService {
     }
 
     private PaymentResponse handle3DSPaymentResult(Payment payment, Order order,
-                                                   ThreedsPayment threedsPayment) {
+            ThreedsPayment threedsPayment) {
         if ("success".equals(threedsPayment.getStatus())) {
             // 3DS payment successful
             payment.setPaymentStatus(PaymentStatus.SUCCESS);
@@ -538,9 +784,13 @@ public class IyzicoPaymentServiceImpl implements IyzicoPaymentService {
 
             log.info("3DS payment successful for order: {}", order.getId());
 
+            // [NEW] Send confirmation email now that payment is confirmed
+            sendPaymentConfirmationEmail(order);
+
             return PaymentResponse.builder()
                     .paymentId(payment.getId())
                     .id(payment.getId())
+                    .uuid(payment.getUuid())
                     .status("SUCCESS")
                     .paymentStatus(PaymentStatus.SUCCESS)
                     .iyzicoPaymentId(threedsPayment.getPaymentId())
@@ -551,6 +801,7 @@ public class IyzicoPaymentServiceImpl implements IyzicoPaymentService {
                     .cardLastFour(threedsPayment.getLastFourDigits())
                     .amount(payment.getAmount())
                     .completedAt(payment.getCompletedAt())
+                    .orderUuid(order.getUuid())
                     .build();
         } else {
             return handlePaymentFailure(payment, threedsPayment.getErrorMessage());
@@ -568,11 +819,35 @@ public class IyzicoPaymentServiceImpl implements IyzicoPaymentService {
         return PaymentResponse.builder()
                 .paymentId(payment.getId())
                 .id(payment.getId())
+                .uuid(payment.getUuid())
                 .status("FAILED")
                 .paymentStatus(PaymentStatus.FAILED)
                 .errorMessage(errorMessage)
                 .amount(payment.getAmount())
+                .orderUuid(payment.getOrder().getUuid())
                 .build();
+    }
+
+    // =========================================================================
+    // HELPER METHODS - EMAIL
+    // =========================================================================
+
+    /**
+     * [NEW] Send order confirmation email after successful payment.
+     * Used for ONLINE_CREDIT_CARD / 3DS orders where email is deferred
+     * until payment completes. Email failure should never break the payment flow.
+     */
+    private void sendPaymentConfirmationEmail(Order order) {
+        try {
+            String email = order.getOrderEmail();
+            if (email != null) {
+                emailService.sendOrderConfirmationEmail(order, order.getUser());
+                log.info("Payment confirmation email sent to: {} for order: {}", email, order.getId());
+            }
+        } catch (Exception e) {
+            log.error("Failed to send payment confirmation email for order {}: {}",
+                    order.getId(), e.getMessage());
+        }
     }
 
     // =========================================================================
@@ -596,5 +871,13 @@ public class IyzicoPaymentServiceImpl implements IyzicoPaymentService {
             return order.getPayment();
         }
         throw new ResourceNotFoundException("Bu sipariş için ödeme kaydı bulunamadı: " + order.getId());
+    }
+
+    // Helper to reuse logic safely
+    private Payment getOrderedPayment(Order order) {
+        if (order.getPayment() != null)
+            return order.getPayment();
+        return paymentRepository.findByOrderId(order.getId())
+                .orElseThrow(() -> new ResourceNotFoundException("Ödeme bulunamadı for order: " + order.getId()));
     }
 }

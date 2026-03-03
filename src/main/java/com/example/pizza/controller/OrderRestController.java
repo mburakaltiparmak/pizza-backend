@@ -2,11 +2,11 @@ package com.example.pizza.controller;
 
 import com.example.pizza.constants.order.OrderStatus;
 import com.example.pizza.dto.order.OrderCreateRequest;
+import com.example.pizza.dto.order.OrderCancelRequest;
 import com.example.pizza.dto.order.OrderResponse;
 import com.example.pizza.dto.order.OrderStatusUpdateRequest;
 import com.example.pizza.dto.order.StockErrorResponse;
 import com.example.pizza.dto.paginate.PagedResponse;
-import com.example.pizza.entity.logic.Payment;
 import com.example.pizza.entity.order.Order;
 import com.example.pizza.entity.user.User;
 import com.example.pizza.logic.mapper.OrderMapper;
@@ -148,33 +148,89 @@ public class OrderRestController {
         // READ OPERATIONS
         // ============================================================================
 
+        /**
+         * Secure Order Tracking (Public)
+         */
+        @GetMapping("/track/{uuid}")
+        public ResponseEntity<com.example.pizza.dto.order.OrderTrackingResponse> trackOrder(
+                        @PathVariable java.util.UUID uuid) {
+                log.debug("Tracking request for UUID: {}", uuid);
+                Order order = orderService.trackOrder(uuid);
+                return ResponseEntity.ok(orderMapper.toTrackingResponse(order));
+        }
+
+        /**
+         * Get all orders (Admin/Personal only)
+         *
+         * Query params:
+         * - sort: sort field and direction (default: orderDate,desc)
+         *
+         * Examples:
+         * - GET /api/orders?sort=orderDate,desc
+         * - GET /api/orders?sort=totalAmount,asc
+         * - GET /api/orders?sort=orderStatus,desc
+         */
         @GetMapping
         @PreAuthorize("hasRole('ADMIN') or hasRole('PERSONAL')")
-        public ResponseEntity<List<OrderResponse>> getAllOrders() {
-                log.debug("Getting all orders");
-                List<Order> orders = orderService.getAllOrders();
+        public ResponseEntity<List<OrderResponse>> getAllOrders(
+                        @RequestParam(required = false) String sort) {
+
+                Sort sortObj = parseSortParameter(sort);
+                log.debug("Getting all orders (sorted by: {})", sortObj);
+
+                List<Order> orders = orderService.getAllOrders(sortObj);
                 List<OrderResponse> response = orders.stream()
                                 .map(orderMapper::toOrderResponse)
                                 .collect(Collectors.toList());
                 return ResponseEntity.ok(response);
         }
 
+        /**
+         * Get orders by status (Admin/Personal only)
+         *
+         * Query params:
+         * - sort: sort field and direction (default: orderDate,desc)
+         *
+         * Examples:
+         * - GET /api/orders/status/PENDING?sort=orderDate,desc
+         * - GET /api/orders/status/DELIVERED?sort=totalAmount,asc
+         */
         @GetMapping("/status/{status}")
         @PreAuthorize("hasRole('ADMIN') or hasRole('PERSONAL')")
-        public ResponseEntity<List<OrderResponse>> getOrdersByStatus(@PathVariable OrderStatus status) {
-                log.debug("Getting orders with status: {}", status);
-                List<Order> orders = orderService.getOrdersByStatus(status);
+        public ResponseEntity<List<OrderResponse>> getOrdersByStatus(
+                        @PathVariable OrderStatus status,
+                        @RequestParam(required = false) String sort) {
+
+                Sort sortObj = parseSortParameter(sort);
+                log.debug("Getting orders with status: {} (sorted by: {})", status, sortObj);
+
+                List<Order> orders = orderService.getOrdersByStatus(status, sortObj);
                 List<OrderResponse> response = orders.stream()
                                 .map(orderMapper::toOrderResponse)
                                 .collect(Collectors.toList());
                 return ResponseEntity.ok(response);
         }
 
+        /**
+         * Get current user's orders
+         *
+         * Query params:
+         * - sort: sort field and direction (default: orderDate,desc)
+         *
+         * Examples:
+         * - GET /api/orders/my-orders?sort=orderDate,desc
+         * - GET /api/orders/my-orders?sort=totalAmount,asc
+         */
         @GetMapping("/my-orders")
-        public ResponseEntity<List<OrderResponse>> getMyOrders(@AuthenticationPrincipal UserDetails userDetails) {
-                log.debug("Getting orders for user: {}", userDetails.getUsername());
+        public ResponseEntity<List<OrderResponse>> getMyOrders(
+                        @AuthenticationPrincipal UserDetails userDetails,
+                        @RequestParam(required = false) String sort) {
+
+                Sort sortObj = parseSortParameter(sort);
+                log.debug("Getting orders for user: {} (sorted by: {})", userDetails.getUsername(), sortObj);
+
                 Long userId = userService.getUserByEmail(userDetails.getUsername()).getId();
-                List<Order> orders = orderService.getOrdersByUser(userId);
+                List<Order> orders = orderService.getOrdersByUser(userId, sortObj);
                 List<OrderResponse> response = orders.stream()
                                 .map(orderMapper::toOrderResponse)
                                 .collect(Collectors.toList());
@@ -184,26 +240,46 @@ public class OrderRestController {
         @GetMapping("/{id}")
         public ResponseEntity<?> getOrderById(
                         @PathVariable Long id,
+                        @RequestParam(required = false) String email,
                         @AuthenticationPrincipal UserDetails userDetails) {
 
-                log.debug("Getting order ID: {} for user: {}", id, userDetails.getUsername());
+                String username = userDetails != null ? userDetails.getUsername() : "Guest";
+                log.debug("Getting order ID: {} for user: {} (email param: {})", id, username, email);
 
                 try {
                         Order order = orderService.getOrderById(id);
 
-                        // Check authorization
-                        boolean isAdminOrPersonal = userDetails.getAuthorities().stream()
-                                        .anyMatch(a -> a.getAuthority().equals("ROLE_ADMIN") ||
-                                                        a.getAuthority().equals("ROLE_PERSONAL"));
+                        // 1. Authenticated User Check
+                        if (userDetails != null) {
+                                boolean isAdminOrPersonal = userDetails.getAuthorities().stream()
+                                                .anyMatch(a -> a.getAuthority().equals("ROLE_ADMIN") ||
+                                                                a.getAuthority().equals("ROLE_PERSONAL"));
 
-                        boolean isOrderOwner = order.getUser() != null &&
-                                        order.getUser().getEmail().equals(userDetails.getUsername());
+                                boolean isOrderOwner = order.getUser() != null &&
+                                                order.getUser().getEmail().equals(userDetails.getUsername());
 
-                        if (!isAdminOrPersonal && !isOrderOwner) {
-                                log.warn("Unauthorized access attempt to order {} by user {}",
-                                                id, userDetails.getUsername());
-                                return ResponseEntity.status(HttpStatus.FORBIDDEN)
-                                                .body(new ApiError("Bu siparişe erişim yetkiniz yok"));
+                                if (!isAdminOrPersonal && !isOrderOwner) {
+                                        log.warn("Unauthorized access attempt to order {} by user {}",
+                                                        id, userDetails.getUsername());
+                                        return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                                                        .body(new ApiError("Bu siparişe erişim yetkiniz yok"));
+                                }
+                        }
+                        // 2. Guest User Check (Email Verification)
+                        else {
+                                if (email == null) {
+                                        return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                                                        .body(new ApiError(
+                                                                        "Bu siparişi görüntülemek için giriş yapmalı veya email adresinizi belirtmelisiniz."));
+                                }
+
+                                String orderEmail = order.getOrderEmail();
+                                if (orderEmail == null || !orderEmail.equalsIgnoreCase(email)) {
+                                        log.warn("Guest access denied for order {}. Expected: {}, Provided: {}",
+                                                        id, orderEmail, email);
+                                        return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                                                        .body(new ApiError("E-posta adresi bu siparişle eşleşmiyor."));
+                                }
                         }
 
                         OrderResponse response = orderMapper.toOrderResponse(order);
@@ -225,21 +301,10 @@ public class OrderRestController {
                         @PathVariable Long id,
                         @RequestParam OrderStatus status) {
 
-                log.info("Updating order {} status to {}", id, status);
-
-                try {
-                        Order updatedOrder = orderService.updateOrderStatus(id, status);
-                        OrderResponse response = orderMapper.toOrderResponse(updatedOrder);
-                        return ResponseEntity.ok(response);
-
-                } catch (ResourceNotFoundException e) {
-                        return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                                        .body(new ApiError(e.getMessage()));
-
-                } catch (IllegalStateException e) {
-                        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                                        .body(new ApiError(e.getMessage()));
-                }
+                log.debug("Updating order status (PATCH): ID={}, Status={}", id, status);
+                Order updatedOrder = orderService.updateOrderStatus(id, status);
+                OrderResponse response = orderMapper.toOrderResponse(updatedOrder);
+                return ResponseEntity.ok(response);
         }
 
         @PutMapping("/{id}/status")
@@ -253,38 +318,42 @@ public class OrderRestController {
                 return ResponseEntity.ok(response);
         }
 
-        @PostMapping("/{id}/cancel")
+        /**
+         * Unified Order Cancellation Endpoint
+         * Uses UUID for all users (Authenticated & Guest) to prevent ID enumeration.
+         * Logic is centralized in OrderService.
+         */
+        @PostMapping("/{uuid}/cancel")
         public ResponseEntity<?> cancelOrder(
-                        @PathVariable Long id,
+                        @PathVariable java.util.UUID uuid,
+                        @Valid @RequestBody(required = false) OrderCancelRequest request,
                         @AuthenticationPrincipal UserDetails userDetails) {
 
-                log.info("Cancelling order {} by user {}", id, userDetails.getUsername());
+                String username = userDetails != null ? userDetails.getUsername() : "Guest";
+                log.info("Cancellation request for UUID: {} by {}", uuid, username);
+
+                User user = null;
+                if (userDetails != null) {
+                        try {
+                                user = userService.getUserByEmail(userDetails.getUsername());
+                        } catch (ResourceNotFoundException e) {
+                                log.warn("Authenticated user not found in DB: {}", userDetails.getUsername());
+                        }
+                }
+
+                String verificationEmail = request != null ? request.getEmail() : null;
 
                 try {
-                        Order order = orderService.getOrderById(id);
-
-                        // Check authorization
-                        boolean isAdminOrPersonal = userDetails.getAuthorities().stream()
-                                        .anyMatch(a -> a.getAuthority().equals("ROLE_ADMIN") ||
-                                                        a.getAuthority().equals("ROLE_PERSONAL"));
-
-                        boolean isOrderOwner = order.getUser() != null &&
-                                        order.getUser().getEmail().equals(userDetails.getUsername());
-
-                        if (!isAdminOrPersonal && !isOrderOwner) {
-                                log.warn("Unauthorized cancellation attempt for order {} by user {}",
-                                                id, userDetails.getUsername());
-                                return ResponseEntity.status(HttpStatus.FORBIDDEN)
-                                                .body(new ApiError("Bu siparişi iptal etme yetkiniz yok"));
-                        }
-
-                        orderService.cancelOrder(id);
+                        orderService.cancelOrder(uuid, user, verificationEmail);
                         return ResponseEntity.ok(new ApiResponse(true, "Sipariş başarıyla iptal edildi"));
 
+                } catch (org.springframework.security.access.AccessDeniedException e) {
+                        log.warn("Unauthorized cancellation attempt: {}", e.getMessage());
+                        return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                                        .body(new ApiError(e.getMessage()));
                 } catch (ResourceNotFoundException e) {
                         return ResponseEntity.status(HttpStatus.NOT_FOUND)
                                         .body(new ApiError(e.getMessage()));
-
                 } catch (IllegalStateException e) {
                         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                                         .body(new ApiError(e.getMessage()));
@@ -383,5 +452,44 @@ public class OrderRestController {
                                 pageable);
 
                 return ResponseEntity.ok(PagedResponse.of(page));
+        }
+
+        // ============================================================================
+        // HELPER METHODS
+        // ============================================================================
+
+        /**
+         * Parse sort parameter from query string
+         *
+         * Format: "field,direction" (e.g., "orderDate,desc" or "totalAmount,asc")
+         *
+         * @param sortParam Sort parameter string
+         * @return Sort object (defaults to orderDate DESC if invalid)
+         */
+        private Sort parseSortParameter(String sortParam) {
+                if (sortParam == null || sortParam.trim().isEmpty()) {
+                        return Sort.by(Sort.Direction.DESC, "orderDate");
+                }
+
+                try {
+                        String[] parts = sortParam.split(",");
+                        if (parts.length != 2) {
+                                log.warn("Invalid sort parameter format: {}, using default", sortParam);
+                                return Sort.by(Sort.Direction.DESC, "orderDate");
+                        }
+
+                        String field = parts[0].trim();
+                        String direction = parts[1].trim().toUpperCase();
+
+                        Sort.Direction sortDirection = direction.equals("ASC")
+                                        ? Sort.Direction.ASC
+                                        : Sort.Direction.DESC;
+
+                        return Sort.by(sortDirection, field);
+
+                } catch (Exception e) {
+                        log.warn("Error parsing sort parameter: {}, using default", sortParam, e);
+                        return Sort.by(Sort.Direction.DESC, "orderDate");
+                }
         }
 }

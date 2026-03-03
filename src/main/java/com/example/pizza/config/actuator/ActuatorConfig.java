@@ -81,13 +81,13 @@ public class ActuatorConfig {
         @Value("${app.version:1.0.0}")
         private String appVersion;
 
-        @Value("${info.app.developer:Your Name}")
+        @Value("${info.app.developer:Burak Altiparmak}")
         private String developer;
 
-        @Value("${info.app.contact:info@your-domain.com}")
+        @Value("${info.app.contact:info@burakaltiparmak.site}")
         private String contact;
 
-        @Value("${info.app.portfolio:https://your-portfolio.com}")
+        @Value("${info.app.portfolio:https://burakaltiparmak.site}")
         private String portfolio;
 
         @Override

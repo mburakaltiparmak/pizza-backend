@@ -39,10 +39,8 @@ public class CategoryServiceImpl implements CategoryService {
     @Transactional(readOnly = true)
     @Cacheable(value = "categories", key = "'all'")
     public List<CategoryResponse> getAllCategories() {
-        log.debug("Fetching all categories (non-paginated)");
-        return categoryRepository.findAll().stream()
-                .map(this::toCategoryResponse)
-                .toList();
+        log.debug("Fetching all categories with product count (non-paginated)");
+        return categoryRepository.findAllWithProductCount();
     }
 
     @Override
@@ -166,13 +164,12 @@ public class CategoryServiceImpl implements CategoryService {
     @Cacheable(value = "categories", key = "'page_' + #pageable.pageNumber + '_size_' + #pageable.pageSize + " +
             "'_sort_' + (#pageable.sort.isSorted() ? #pageable.sort.toString() : 'unsorted')")
     public Page<CategoryResponse> getAllCategories(Pageable pageable) {
-        log.debug("Fetching paginated categories - page: {}, size: {}, sort: {}",
+        log.debug("Fetching paginated categories with product count - page: {}, size: {}, sort: {}",
                 pageable.getPageNumber(),
                 pageable.getPageSize(),
                 pageable.getSort());
 
-        Page<Category> categoryPage = categoryRepository.findAll(pageable);
-        return categoryPage.map(this::toCategoryResponse);
+        return categoryRepository.findAllWithProductCount(pageable);
     }
 
     /**
@@ -231,10 +228,4 @@ public class CategoryServiceImpl implements CategoryService {
     // HELPER METHODS
     // ============================================================================
 
-    private CategoryResponse toCategoryResponse(Category category) {
-        return new CategoryResponse(
-                category.getId(),
-                category.getName(),
-                category.getImg());
-    }
 }

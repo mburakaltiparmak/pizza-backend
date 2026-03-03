@@ -26,4 +26,6 @@ public class OrderCreateRequest {
 
     @Size(max = 500, message = "Not 500 karakterden uzun olamaz")
     private String notes;
+
+    private String promoCode;
 }

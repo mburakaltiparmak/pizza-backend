@@ -1,7 +1,7 @@
 package com.example.pizza.controller;
 
 import com.example.pizza.config.security.UnifiedTokenProvider;
-import com.example.pizza.constants.user.Role;
+
 import com.example.pizza.dto.exceptions.ApiResponse;
 import com.example.pizza.dto.user.*;
 import com.example.pizza.entity.token.RefreshToken;
@@ -14,6 +14,7 @@ import com.example.pizza.exceptions.user.UserRegistrationException;
 import com.example.pizza.service.logic.RefreshTokenService;
 import com.example.pizza.service.user.SupabaseUserService;
 import com.example.pizza.service.user.UserService;
+import com.example.pizza.util.LogMaskingUtil;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
@@ -61,8 +62,7 @@ public class AuthController {
             User registeredUser = userService.registerUser(localUser);
 
             return ResponseEntity.status(HttpStatus.CREATED).body(
-                    new ApiResponse(true, "Kullanıcı başarıyla kaydedildi. Lütfen email adresinizi doğrulayın.")
-            );
+                    new ApiResponse(true, "Kullanıcı başarıyla kaydedildi. Lütfen email adresinizi doğrulayın."));
         } catch (UserRegistrationException e) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                     .body(new ApiError(e.getMessage()));
@@ -82,9 +82,7 @@ public class AuthController {
             Authentication authentication = authenticationManager.authenticate(
                     new UsernamePasswordAuthenticationToken(
                             loginRequest.getEmail(),
-                            loginRequest.getPassword()
-                    )
-            );
+                            loginRequest.getPassword()));
 
             SecurityContextHolder.getContext().setAuthentication(authentication);
 
@@ -101,7 +99,7 @@ public class AuthController {
             userService.updateLoginTime(loginRequest.getEmail());
 
             logger.info("User authenticated successfully: {} (Access token: 30min, Refresh token: 7 days)",
-                    loginRequest.getEmail());
+                    LogMaskingUtil.maskEmail(loginRequest.getEmail()));
 
             // Return both tokens
             return ResponseEntity.ok(AuthenticationResponse.builder()
@@ -112,17 +110,18 @@ public class AuthController {
                     .build());
 
         } catch (BadCredentialsException e) {
-            logger.warn("Login failed - invalid credentials for: {}", loginRequest.getEmail());
+            logger.warn("Login failed - invalid credentials for: {}",
+                    LogMaskingUtil.maskEmail(loginRequest.getEmail()));
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
                     .body(new ApiError("Geçersiz email veya şifre."));
         } catch (Exception e) {
-            logger.error("Login error for user: {}", loginRequest.getEmail(), e);
+            logger.error("Login error for user: {}", LogMaskingUtil.maskEmail(loginRequest.getEmail()), e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body(new ApiError("Giriş işlemi sırasında bir hata oluştu."));
         }
     }
 
-    @PostMapping("/refresh")
+    @PostMapping("/refresh-token")
     public ResponseEntity<?> refreshToken(
             @Valid @RequestBody RefreshTokenRequest refreshRequest,
             HttpServletRequest request) {
@@ -140,8 +139,7 @@ public class AuthController {
             // Generate new access token
             String newAccessToken = tokenProvider.generateAccessToken(
                     user.getEmail(),
-                    user.getAuthorities()
-            );
+                    user.getAuthorities());
 
             logger.info("Token refreshed successfully for user: {}", user.getEmail());
 
@@ -234,7 +232,8 @@ public class AuthController {
             // Sync user with Supabase (creates or updates)
             User user = supabaseUserService.syncSupabaseUser(supabaseUser);
 
-            // Generate application token (using deprecated method for Supabase compatibility)
+            // Generate application token (using deprecated method for Supabase
+            // compatibility)
             String appToken = tokenProvider.generateToken(user.getEmail(), user.getAuthorities());
 
             logger.info("Supabase callback successful for user: {}", user.getEmail());
@@ -247,29 +246,6 @@ public class AuthController {
         }
     }
 
-    @GetMapping("/pending-users")
-    public ResponseEntity<?> getPendingUsers() {
-        return ResponseEntity.ok(userService.getPendingUsers());
-    }
-
-    @PostMapping("/approve/{userId}")
-    public ResponseEntity<?> approveUser(@PathVariable Long userId) {
-        userService.approveUser(userId);
-        return ResponseEntity.ok(new ApiResponse(true, "Kullanıcı onaylandı."));
-    }
-
-    @PostMapping("/reject/{userId}")
-    public ResponseEntity<?> rejectUser(@PathVariable Long userId) {
-        userService.rejectUser(userId);
-        return ResponseEntity.ok(new ApiResponse(true, "Kullanıcı reddedildi."));
-    }
-
-    @PostMapping("/change-role/{userId}")
-    public ResponseEntity<?> changeUserRole(@PathVariable Long userId, @RequestParam Role role) {
-        userService.updateUserRole(userId, role);
-        return ResponseEntity.ok(new ApiResponse(true, "Kullanıcı rolü güncellendi."));
-    }
-
     @PostMapping("/forgot-password")
     public ResponseEntity<?> forgotPassword(@RequestBody Map<String, String> request) {
         String email = request.get("email");
@@ -280,9 +256,11 @@ public class AuthController {
         try {
             boolean sent = userService.sendPasswordResetEmail(email);
             if (sent) {
-                return ResponseEntity.ok(new ApiResponse(true, "Şifre sıfırlama bağlantısı email adresinize gönderildi."));
+                return ResponseEntity
+                        .ok(new ApiResponse(true, "Şifre sıfırlama bağlantısı email adresinize gönderildi."));
             } else {
-                return ResponseEntity.badRequest().body(new ApiError("Bu email adresine sahip bir kullanıcı bulunamadı."));
+                return ResponseEntity.badRequest()
+                        .body(new ApiError("Bu email adresine sahip bir kullanıcı bulunamadı."));
             }
         } catch (Exception e) {
             logger.error("Error sending password reset email", e);

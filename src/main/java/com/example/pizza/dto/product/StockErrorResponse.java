@@ -12,5 +12,6 @@ public class StockErrorResponse {
     private String productName;
     private Integer availableStock;
     private Integer requestedQuantity;
+    @Builder.Default
     private LocalDateTime timestamp = LocalDateTime.now();
 }

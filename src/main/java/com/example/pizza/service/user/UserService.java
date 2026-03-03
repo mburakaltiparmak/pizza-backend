@@ -11,6 +11,7 @@ import com.example.pizza.exceptions.user.UserRegistrationException;
 import com.example.pizza.repository.UserRepository;
 import com.example.pizza.repository.VerificationTokenRepository;
 import com.example.pizza.service.logic.EmailService;
+import com.example.pizza.util.LogMaskingUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataAccessException;
@@ -39,16 +40,14 @@ public class UserService {
     private final JdbcTemplate jdbcTemplate;
 
     private static final Pattern EMAIL_PATTERN = Pattern.compile(
-            "^[A-Za-z0-9+_.-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$"
-    );
+            "^[A-Za-z0-9+_.-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$");
 
     private static final Pattern PHONE_PATTERN = Pattern.compile(
-            "^(\\+90|0)?[0-9]{10}$"
-    );
+            "^(\\+90|0)?[0-9]{10}$");
 
     @Transactional(rollbackFor = Exception.class)
     public User registerUser(User user) {
-        log.info("Registering new user: {}", user.getEmail());
+        log.info("Registering new user: {}", LogMaskingUtil.maskEmail(user.getEmail()));
 
         if (user == null) {
             throw new IllegalArgumentException("Kullanıcı bilgisi boş olamaz");
@@ -112,11 +111,10 @@ public class UserService {
             verificationToken.setUser(savedUser);
             verificationToken.setExpiryDate(LocalDateTime.now().plusHours(24));
             tokenRepository.save(verificationToken);
-        if("${spring.profiles.active}".equals("prod") ) {}
             emailService.sendVerificationEmail(savedUser, token);
         }
 
-        log.info("User registered successfully: {}", savedUser.getEmail());
+        log.info("User registered successfully: {}", LogMaskingUtil.maskEmail(savedUser.getEmail()));
         return savedUser;
     }
 
@@ -159,7 +157,7 @@ public class UserService {
 
         // Create new address with sequence-generated ID
         UserAddress newAddress = new UserAddress();
-        newAddress.setId(generateAddressId());  // ✅ FIXED: Uses database sequence
+        newAddress.setId(generateAddressId()); // ✅ FIXED: Uses database sequence
         newAddress.setFullAddress(addressDto.getFullAddress().trim());
         newAddress.setCity(addressDto.getCity().trim());
         newAddress.setDistrict(addressDto.getDistrict().trim());
@@ -182,9 +180,10 @@ public class UserService {
         User savedUser = userRepository.save(user);
 
         log.info("Address added successfully for user: {} with ID: {}",
-                user.getEmail(), newAddress.getId());
+                LogMaskingUtil.maskEmail(user.getEmail()), newAddress.getId());
         return savedUser;
     }
+
     @Transactional(rollbackFor = Exception.class)
     public User updateAddress(Long userId, int addressId, UserAddressDto addressDto) {
         log.info("Updating address ID {} for user ID: {}", addressId, userId);
@@ -256,7 +255,7 @@ public class UserService {
         existingAddress.setUpdatedAt(LocalDateTime.now());
 
         User savedUser = userRepository.save(user);
-        log.info("Address updated successfully for user: {}", user.getEmail());
+        log.info("Address updated successfully for user: {}", LogMaskingUtil.maskEmail(user.getEmail()));
         return savedUser;
     }
 
@@ -293,7 +292,7 @@ public class UserService {
         }
 
         User savedUser = userRepository.save(user);
-        log.info("Address removed successfully for user: {}", user.getEmail());
+        log.info("Address removed successfully for user: {}", LogMaskingUtil.maskEmail(user.getEmail()));
         return savedUser;
     }
 
@@ -326,7 +325,7 @@ public class UserService {
         user.setPassword(passwordEncoder.encode(newPassword));
         userRepository.save(user);
 
-        log.info("Password changed successfully for user: {}", user.getEmail());
+        log.info("Password changed successfully for user: {}", LogMaskingUtil.maskEmail(user.getEmail()));
     }
 
     @Transactional(readOnly = true)
@@ -400,8 +399,7 @@ public class UserService {
             log.error("Failed to generate address ID from sequence", e);
             throw new IllegalStateException(
                     "Address ID generation failed. Ensure database sequence 'pizza.user_addresses_seq' exists.",
-                    e
-            );
+                    e);
         }
     }
 
@@ -440,7 +438,7 @@ public class UserService {
 
         emailService.sendPasswordResetEmail(user, token);
 
-        log.info("Password reset email sent to: {}", email);
+        log.info("Password reset email sent to: {}", LogMaskingUtil.maskEmail(email));
         return true;
     }
 
@@ -472,7 +470,7 @@ public class UserService {
 
         tokenRepository.delete(resetToken);
 
-        log.info("Password reset successfully for user: {}", user.getEmail());
+        log.info("Password reset successfully for user: {}", LogMaskingUtil.maskEmail(user.getEmail()));
         return true;
     }
 
@@ -545,9 +543,10 @@ public class UserService {
 
         tokenRepository.delete(verificationToken);
 
-        log.info("Email verified successfully for user: {}", user.getEmail());
+        log.info("Email verified successfully for user: {}", LogMaskingUtil.maskEmail(user.getEmail()));
         return true;
     }
+
     @Transactional(readOnly = true)
     public Page<User> getAllUsers(Pageable pageable) {
         log.debug("Fetching paginated users - page: {}, size: {}, sort: {}",

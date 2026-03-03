@@ -24,6 +24,7 @@ public class OrderMapper {
 
         OrderResponse.OrderResponseBuilder builder = OrderResponse.builder()
                 .id(order.getId())
+                .uuid(order.getUuid())
                 .orderDate(order.getOrderDate())
                 .orderStatus(order.getOrderStatus())
                 .totalAmount(order.getTotalAmount())
@@ -104,5 +105,66 @@ public class OrderMapper {
                 .createdAt(address.getCreatedAt())
                 .updatedAt(address.getUpdatedAt())
                 .build();
+    }
+
+    public com.example.pizza.dto.order.OrderTrackingResponse toTrackingResponse(Order order) {
+        if (order == null) {
+            return null;
+        }
+
+        return com.example.pizza.dto.order.OrderTrackingResponse.builder()
+                .uuid(order.getUuid())
+                .orderStatus(order.getOrderStatus())
+                .monitorStatus(calculateMonitorStatus(order.getOrderStatus()))
+                .estimatedDeliveryTime("30-40 min") // Static for now, can be dynamic later
+                .items(toOrderItemResponseList(order.getItems()))
+                .totalAmount(order.getTotalAmount())
+                .recipientNameMasked(maskString(order.getDeliveryAddress().getRecipientName()))
+                .deliveryAddressMasked(maskAddress(order.getDeliveryAddress()))
+                .build();
+    }
+
+    private String calculateMonitorStatus(com.example.pizza.constants.order.OrderStatus status) {
+        switch (status) {
+            case PENDING:
+            case CONFIRMED:
+                return "PREPARING";
+            case PREPARING:
+                return "OVEN";
+            case SHIPPING:
+                return "ON_WAY";
+            case DELIVERED:
+                return "DELIVERED";
+            case CANCELLED:
+                return "CANCELLED";
+            default:
+                return "PREPARING";
+        }
+    }
+
+    private String maskString(String input) {
+        if (input == null || input.isEmpty())
+            return "***";
+        if (input.length() <= 2)
+            return input.charAt(0) + "***";
+
+        String[] parts = input.split(" ");
+        StringBuilder masked = new StringBuilder();
+
+        for (String part : parts) {
+            if (part.length() > 1) {
+                masked.append(part.charAt(0)).append("*".repeat(Math.max(0, part.length() - 1))).append(" ");
+            } else {
+                masked.append(part).append(" ");
+            }
+        }
+        return masked.toString().trim();
+    }
+
+    private String maskAddress(UserAddress address) {
+        if (address == null)
+            return "***";
+        // Return only City / District and masked street
+        return address.getDistrict() + " / " + address.getCity() + " (******)";
     }
 }

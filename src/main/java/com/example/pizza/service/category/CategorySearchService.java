@@ -31,7 +31,8 @@ public class CategorySearchService {
                 .id(category.getId())
                 .name(category.getName())
                 .img(category.getImg())
-                .createdAt(createdAtDate)  // LocalDate
+                .productCount(category.getProducts() != null ? category.getProducts().size() : 0)
+                .createdAt(createdAtDate) // LocalDate
                 .build();
 
         categorySearchRepository.save(document);
@@ -76,7 +77,7 @@ public class CategorySearchService {
         return new CategoryResponse(
                 document.getId(),
                 document.getName(),
-                document.getImg()
-        );
+                document.getImg(),
+                document.getProductCount());
     }
 }

@@ -19,30 +19,11 @@ services:
       - pizza-network
 
   # ============================================================================
-  # POSTGRESQL DATABASE SERVICE
+  # POSTGRESQL DATABASE - NOW USING SUPABASE (REMOVED)
   # ============================================================================
-  postgres:
-    image: postgres:17-alpine
-    container_name: pizza-postgres
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: postgres
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_INITDB_ARGS: "--encoding=UTF8"
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./init-schema.sql:/docker-entrypoint-initdb.d/00-init-schema.sql
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 60s
-    networks:
-      - pizza-network
+  # PostgreSQL is now managed by Supabase cloud service
+  # Connection details are configured in .env file:
+  # - DB_URL, DB_USERNAME, DB_PASSWORD, DB_SCHEMA
 
   # ============================================================================
   # REDIS CACHE SERVICE
@@ -95,7 +76,8 @@ services:
     volumes:
       - elasticsearch_data:/usr/share/elasticsearch/data
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
+      test:
+        ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -141,14 +123,15 @@ services:
     restart: unless-stopped
     ports:
       - "8080:8080"
+      - "9092:9092"
     environment:
       # ========== SPRING PROFILE ==========
-      SPRING_PROFILES_ACTIVE: prod
+      SPRING_PROFILES_ACTIVE: dev
 
-      # ========== DATABASE (Spring Boot Standard Naming) ==========
-      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/postgres?currentSchema=pizza
-      SPRING_DATASOURCE_USERNAME: postgres
-      SPRING_DATASOURCE_PASSWORD: ${SPRING_DATASOURCE_PASSWORD}
+      # ========== DATABASE - SUPABASE (Spring Boot Standard Naming) ==========
+      SPRING_DATASOURCE_URL: ${DB_URL}
+      SPRING_DATASOURCE_USERNAME: ${DB_USERNAME}
+      SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD}
 
       # ========== REDIS (Spring Boot Standard Naming) ==========
       SPRING_DATA_REDIS_HOST: redis
@@ -166,22 +149,35 @@ services:
       APP_SUPABASE_URL: ${SUPABASE_URL}
       APP_SUPABASE_ENABLED: "true"
 
+      # ========== APPLICATION URLS ==========
+      APP_BASE_URL: ${APP_BASE_URL:-http://localhost:8080}
+      APP_FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
+      OAUTH2_REDIRECT_URI: ${OAUTH2_REDIRECT_URI:-http://localhost:3000/oauth2/callback}
+
       # ========== CLOUDINARY (Spring Boot Relaxed Binding) ==========
       CLOUDINARY_CLOUD_NAME: ${CLOUD_NAME}
       CLOUDINARY_API_KEY: ${API_KEY}
       CLOUDINARY_API_SECRET: ${API_SECRET}
 
       # ========== MAIL (Spring Boot Standard Naming) ==========
+      # Natro SMTP Configuration (Port 587 with STARTTLS)
       SPRING_MAIL_HOST: ${MAIL_HOST}
-      SPRING_MAIL_PORT: ${MAIL_PORT}
+      SPRING_MAIL_PORT: ${MAIL_PORT:-587}
       SPRING_MAIL_USERNAME: ${MAIL_USERNAME}
       SPRING_MAIL_PASSWORD: ${MAIL_PASSWORD}
+      MAIL_FROM_ADDRESS: ${MAIL_FROM_ADDRESS}
+      SPRING_MAIL_PROPERTIES_MAIL_SMTP_AUTH: ${MAIL_SMTP_AUTH:-true}
+      SPRING_MAIL_PROPERTIES_MAIL_SMTP_SSL_ENABLE: ${MAIL_SMTP_SSL_ENABLE:-false}
+      SPRING_MAIL_PROPERTIES_MAIL_SMTP_STARTTLS_ENABLE: ${MAIL_SMTP_STARTTLS_ENABLE:-true}
+      SPRING_MAIL_PROPERTIES_MAIL_SMTP_STARTTLS_REQUIRED: ${MAIL_SMTP_STARTTLS_REQUIRED:-false}
+      SPRING_MAIL_PROPERTIES_MAIL_SMTP_SSL_TRUST: ${MAIL_SMTP_SSL_TRUST:-*}
+      SPRING_MAIL_PROPERTIES_MAIL_DEBUG: ${MAIL_DEBUG:-false}
 
       # ========== IYZICO PAYMENT ==========
       IYZICO_API_KEY: ${IYZICO_API_KEY}
       IYZICO_SECRET_KEY: ${IYZICO_SECRET_KEY}
       IYZICO_BASE_URL: ${IYZICO_BASE_URL:-https://sandbox-api.iyzipay.com}
-      IYZICO_CALLBACK_URL: ${IYZICO_CALLBACK_URL}
+      IYZICO_CALLBACK_URL: ${IYZICO_CALLBACK_URL:-https://api.burakaltiparmak.site/pizza/api/payment/3ds/callback}
 
       # ========== CORS ==========
       CORS_ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:3000}
@@ -194,14 +190,20 @@ services:
       JAVA_OPTS: "-Xmx512m -Xms256m"
 
     depends_on:
-      postgres:
-        condition: service_healthy
       redis:
         condition: service_healthy
       elasticsearch:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/pizza/actuator/health"]
+      test:
+        [
+          "CMD",
+          "wget",
+          "--quiet",
+          "--tries=1",
+          "--spider",
+          "http://localhost:8080/pizza/actuator/health",
+        ]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -214,7 +216,7 @@ services:
   # ============================================================================
   # MONITORING STACK
   # ============================================================================
-  
+
   prometheus:
     image: prom/prometheus:latest
     container_name: pizza-prometheus
@@ -225,16 +227,16 @@ services:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
     command:
-      - '--config.file=/etc/prometheus/prometheus.yml'
-      - '--storage.tsdb.path=/prometheus'
-      - '--web.console.libraries=/etc/prometheus/console_libraries'
-      - '--web.console.templates=/etc/prometheus/consoles'
-      - '--storage.tsdb.retention.time=30d'
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.console.libraries=/etc/prometheus/console_libraries"
+      - "--web.console.templates=/etc/prometheus/consoles"
+      - "--storage.tsdb.retention.time=30d"
     networks:
       - pizza-network
     depends_on:
       - app
-      
+
   grafana:
     image: grafana/grafana:latest
     container_name: pizza-grafana
@@ -242,16 +244,17 @@ services:
     ports:
       - "3001:3000"
     environment:
-      - GF_SECURITY_ADMIN_USER=admin
-      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
       - GF_INSTALL_PLUGINS=redis-datasource
     volumes:
       - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
     networks:
       - pizza-network
     depends_on:
       - prometheus
-      
+
   node-exporter:
     image: prom/node-exporter:latest
     container_name: pizza-node-exporter
@@ -259,16 +262,16 @@ services:
     ports:
       - "9100:9100"
     command:
-      - '--path.procfs=/host/proc'
-      - '--path.sysfs=/host/sys'
-      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+      - "--path.procfs=/host/proc"
+      - "--path.sysfs=/host/sys"
+      - "--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)"
     volumes:
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
       - /:/rootfs:ro
     networks:
       - pizza-network
-      
+
   cadvisor:
     image: gcr.io/cadvisor/cadvisor:latest
     container_name: pizza-cadvisor
@@ -285,6 +288,35 @@ services:
     networks:
       - pizza-network
 
+  loki:
+    image: grafana/loki:latest
+    container_name: pizza-loki
+    restart: unless-stopped
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./loki-config.yml:/etc/loki/loki-config.yml:ro
+      - loki_data:/loki
+    command: -config.file=/etc/loki/loki-config.yml
+    networks:
+      - pizza-network
+    depends_on:
+      - app
+
+  promtail:
+    image: grafana/promtail:latest
+    container_name: pizza-promtail
+    restart: unless-stopped
+    volumes:
+      - ./promtail-config.yml:/etc/promtail/promtail-config.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+    command: -config.file=/etc/promtail/promtail-config.yml
+    networks:
+      - pizza-network
+    depends_on:
+      - loki
+
 # ============================================================================
 # NETWORKS
 # ============================================================================
@@ -296,8 +328,6 @@ networks:
 # VOLUMES
 # ============================================================================
 volumes:
-  postgres_data:
-    driver: local
   redis_data:
     driver: local
   elasticsearch_data:
@@ -309,4 +339,6 @@ volumes:
   prometheus_data:
     driver: local
   grafana_data:
+    driver: local
+  loki_data:
     driver: local

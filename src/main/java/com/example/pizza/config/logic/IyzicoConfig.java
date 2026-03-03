@@ -3,10 +3,12 @@ package com.example.pizza.config.logic;
 import com.iyzipay.Options;
 import lombok.Getter;
 import lombok.Setter;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
+@Slf4j
 @Configuration
 @ConfigurationProperties(prefix = "iyzico")
 @Getter
@@ -35,6 +37,6 @@ public class IyzicoConfig {
         if (secretKey == null || secretKey.isEmpty()) {
             throw new IllegalStateException("Iyzico Secret Key (IYZICO_SECRET_KEY) tanımlanmamış!");
         }
-        System.out.println("✅ Iyzico Config loaded. URL: " + baseUrl + ", API Key: " + apiKey.substring(0, 4) + "***");
+        log.info("✅ Iyzico Config loaded. URL: {}, API Key: {}***", baseUrl, apiKey.substring(0, 4));
     }
 }

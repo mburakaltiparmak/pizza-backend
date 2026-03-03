@@ -104,7 +104,7 @@ public class AdminRestController {
         }
     }
 
-    @GetMapping("/users/paged/pending")
+    @GetMapping({ "/users/paged/pending", "/users/pending" })
     public ResponseEntity<PagedResponse<UserResponse>> getPendingUsersPaged(
             @PageableDefault(size = 20, sort = "id") Pageable pageable) {
         try {

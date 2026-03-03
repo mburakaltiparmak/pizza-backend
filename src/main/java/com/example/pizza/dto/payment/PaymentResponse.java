@@ -13,15 +13,18 @@ public class PaymentResponse {
     // ==========================================
     // LEGACY FIELDS (for OrderMapper compatibility)
     // ==========================================
-    private Long id;                    // Payment entity ID
+    private Long id; // Payment entity ID
     private PaymentMethod paymentMethod;
     private PaymentStatus paymentStatus;
 
     // ==========================================
     // COMMON FIELDS
     // ==========================================
-    private Long paymentId;             // Alias for id (Iyzico response)
-    private String status;              // SUCCESS, FAILED, PENDING, PENDING_3DS (string version)
+    private String uuid; // Unique Payment ID for public access
+    private Long orderId; // Database Order ID
+    private java.util.UUID orderUuid; // Public Order UUID
+    private Long paymentId; // Alias for id (Iyzico response)
+    private String status; // SUCCESS, FAILED, PENDING, PENDING_3DS (string version)
     private String transactionId;
     private String errorMessage;
     private BigDecimal amount;
@@ -31,6 +34,7 @@ public class PaymentResponse {
     // ==========================================
     // IYZICO SPECIFIC FIELDS
     // ==========================================
+    private String iyzicoConversationId; // Order ID usually
     private String iyzicoPaymentId;
     private String authCode;
     private BigDecimal paidAmount;
@@ -40,5 +44,10 @@ public class PaymentResponse {
     private String cardFamily;
     private String cardLastFour;
     private Integer installment;
-    private String threeDsHtmlContent;  // For 3DS flow
+    private String threeDsHtmlContent; // For 3DS flow
+
+    // For Checkout Form
+    private String checkoutFormContent;
+    private String token;
+    private String paymentPageUrl;
 }

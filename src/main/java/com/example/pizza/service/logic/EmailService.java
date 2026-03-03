@@ -31,7 +31,10 @@ public class EmailService {
     @Value("${app.base-url}")
     private String baseUrl;
 
-    @Value("${spring.mail.from-address:info@your-domain.com}")
+    @Value("${app.frontend-url:http://localhost:3000}")
+    private String frontendUrl;
+
+    @Value("${spring.mail.from-address:info@burakaltiparmak.site}")
     private String fromEmail;
 
     @Async("emailTaskExecutor")
@@ -51,7 +54,8 @@ public class EmailService {
 
     @Async("emailTaskExecutor")
     public void sendVerificationEmail(User user, String token) {
-        String verificationUrl = baseUrl + "/verify-email?token=" + token;
+        // Redirect to frontend verification page for better UX
+        String verificationUrl = frontendUrl + "/verify-email?token=" + token;
 
         String htmlContent = "<div style='font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #ddd; border-radius: 5px;'>"
                 +
@@ -79,7 +83,7 @@ public class EmailService {
             emailSender.send(message);
             log.info("📧 Verification email sent to {}", user.getEmail());
         } catch (MessagingException | UnsupportedEncodingException e) {
-            log.error("Failed to send verification email to {}: {}", user.getEmail(), e.getMessage());
+            log.error("❌ SMTP ERROR - Failed to send verification email to {}: {}", user.getEmail(), e.getMessage(), e);
         }
     }
 
@@ -87,6 +91,9 @@ public class EmailService {
     public void sendOrderConfirmationEmail(Order order, User user) {
         SimpleDateFormat dateFormat = new SimpleDateFormat("dd/MM/yyyy HH:mm");
         String orderDate = dateFormat.format(new Date());
+
+        String userName = order.getOrderName();
+        String userEmail = order.getOrderEmail();
 
         StringBuilder itemsHtml = new StringBuilder();
         for (OrderItem item : order.getItems()) {
@@ -105,7 +112,7 @@ public class EmailService {
         String htmlContent = "<div style='font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #ddd; border-radius: 5px;'>"
                 +
                 "<h2 style='color: #e63946; text-align: center;'>🍕 Siparişiniz Alındı!</h2>" +
-                "<p>Merhaba <strong>" + user.getName() + "</strong>,</p>" +
+                "<p>Merhaba <strong>" + userName + "</strong>,</p>" +
                 "<p>Siparişiniz başarıyla alındı. Detaylar aşağıdadır:</p>" +
                 "<div style='background-color: #f5f5f5; padding: 15px; border-radius: 5px; margin: 20px 0;'>" +
                 "<p style='margin: 5px 0;'><strong>Sipariş No:</strong> #" + order.getId() + "</p>" +
@@ -147,14 +154,14 @@ public class EmailService {
             MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
 
             helper.setFrom(new InternetAddress(fromEmail, "Teknolojik Yemekler"));
-            helper.setTo(user.getEmail());
+            helper.setTo(userEmail);
             helper.setSubject("🍕 Sipariş Onayı - #" + order.getId() + " - Teknolojik Yemekler");
             helper.setText(htmlContent, true);
 
             emailSender.send(message);
-            log.info("📧 Order confirmation email sent to {} for order #{}", user.getEmail(), order.getId());
+            log.info("📧 Order confirmation email sent to {} for order #{}", userEmail, order.getId());
         } catch (MessagingException e) {
-            log.error("Failed to send order confirmation email to {}: {}", user.getEmail(), e.getMessage());
+            log.error("Failed to send order confirmation email to {}: {}", userEmail, e.getMessage());
         } catch (UnsupportedEncodingException e) {
             throw new RuntimeException(e);
         }
@@ -162,6 +169,8 @@ public class EmailService {
 
     @Async("emailTaskExecutor")
     public void sendOrderStatusUpdateEmail(Order order, User user, OrderStatus status) {
+        String userName = order.getOrderName();
+        String userEmail = order.getOrderEmail();
         String statusText = getOrderStatusInTurkish(status);
         String subject = "";
         String messageIntro = "";
@@ -198,7 +207,7 @@ public class EmailService {
         String htmlContent = "<div style='font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #ddd; border-radius: 5px;'>"
                 +
                 "<h2 style='color: #e63946; text-align: center;'>" + emoji + " Sipariş Durumu Güncellendi</h2>" +
-                "<p>Merhaba <strong>" + user.getName() + "</strong>,</p>" +
+                "<p>Merhaba <strong>" + userName + "</strong>,</p>" +
                 "<p>" + messageIntro + "</p>" +
                 "<div style='background-color: #f5f5f5; padding: 15px; border-radius: 5px; margin: 20px 0;'>" +
                 "<p style='margin: 5px 0;'><strong>Sipariş No:</strong> #" + order.getId() + "</p>" +
@@ -219,14 +228,14 @@ public class EmailService {
             MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
 
             helper.setFrom(new InternetAddress(fromEmail, "Teknolojik Yemekler"));
-            helper.setTo(user.getEmail());
+            helper.setTo(userEmail);
             helper.setSubject(subject);
             helper.setText(htmlContent, true);
 
             emailSender.send(message);
-            log.info("📧 Order status update email sent to {} for order #{}", user.getEmail(), order.getId());
+            log.info("📧 Order status update email sent to {} for order #{}", userEmail, order.getId());
         } catch (MessagingException e) {
-            log.error("Failed to send order status update email to {}: {}", user.getEmail(), e.getMessage());
+            log.error("Failed to send order status update email to {}: {}", userEmail, e.getMessage());
         } catch (UnsupportedEncodingException e) {
             throw new RuntimeException(e);
         }
@@ -234,7 +243,8 @@ public class EmailService {
 
     @Async("emailTaskExecutor")
     public void sendPasswordResetEmail(User user, String token) {
-        String resetUrl = baseUrl + "/reset-password?token=" + token;
+        // Use frontend URL for password reset (user interaction page)
+        String resetUrl = frontendUrl + "/reset-password?token=" + token;
 
         String htmlContent = "<div style='font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #ddd; border-radius: 5px;'>"
                 +

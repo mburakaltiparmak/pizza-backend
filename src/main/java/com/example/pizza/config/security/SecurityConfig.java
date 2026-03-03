@@ -43,10 +43,16 @@ public class SecurityConfig {
                         .requestMatchers("/upload/**").permitAll()
                         .requestMatchers("/actuator/**").permitAll()
 
+                        // Swagger/OpenAPI Documentation
+                        .requestMatchers("/v3/api-docs/**").permitAll()
+                        .requestMatchers("/swagger-ui/**").permitAll()
+                        .requestMatchers("/swagger-ui.html").permitAll()
+
                         // ================================================================
                         // 2. ELASTICSEARCH REINDEXING (ADMIN ONLY)
                         // ================================================================
-                        // Spesifik kurallar wildcard kurallardan önce yazılmalıdır. SecurityConfig'de sıralama önemli.
+                        // Spesifik kurallar wildcard kurallardan önce yazılmalıdır. SecurityConfig'de
+                        // sıralama önemli.
                         .requestMatchers(HttpMethod.POST, "/api/product/reindex").hasRole("ADMIN")
                         .requestMatchers(HttpMethod.POST, "/api/category/reindex").hasRole("ADMIN")
                         .requestMatchers(HttpMethod.POST, "/api/admin/users/reindex").hasRole("ADMIN")
@@ -87,6 +93,12 @@ public class SecurityConfig {
                         // 3DS callback MUST be public (called by Iyzico)
                         .requestMatchers(HttpMethod.POST, "/api/payment/3ds/callback").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/payment/3ds/callback/json").permitAll()
+                        // Guest payment initialization must be public
+                        .requestMatchers(HttpMethod.POST, "/api/payment/3ds/init/**").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/payment/checkout/init/**").permitAll() // Checkout Form
+                        // Public GET for payment status/recovery
+                        .requestMatchers(HttpMethod.GET, "/api/payment/*/status").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/payment/order/*").permitAll()
                         // Payment processing requires authentication
                         .requestMatchers("/api/payment/*/refund", "/api/payment/*/cancel").hasRole("ADMIN")
                         .requestMatchers("/api/payment/**").authenticated()
@@ -95,8 +107,20 @@ public class SecurityConfig {
                         // 6. ORDER MANAGEMENT
                         // ================================================================
                         .requestMatchers(HttpMethod.POST, "/api/orders").permitAll() // Guest orders allowed
+                        .requestMatchers("/api/orders/track/**").permitAll() // Public order tracking via UUID
+                        .requestMatchers(HttpMethod.POST, "/api/orders/*/cancel").permitAll() // Unified UUID
+                                                                                              // Cancellation (Secured
+                                                                                              // by Service)
+                        .requestMatchers(HttpMethod.GET, "/api/orders/{id}").permitAll() // Guest order tracking
+                                                                                         // (secured by logic)
                         .requestMatchers(HttpMethod.POST, "/api/orders/*/pay/**").permitAll()
                         .requestMatchers("/api/orders/**").authenticated()
+
+                        // ================================================================
+                        // 6.5. PROMO CODES
+                        // ================================================================
+                        .requestMatchers(HttpMethod.GET, "/api/promo-codes/validate").permitAll()
+                        .requestMatchers("/api/promo-codes/**").hasRole("ADMIN")
 
                         // ================================================================
                         // 7. USER & ADDRESS MANAGEMENT

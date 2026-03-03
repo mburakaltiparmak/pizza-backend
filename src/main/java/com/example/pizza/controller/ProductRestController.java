@@ -212,7 +212,7 @@ public class ProductRestController {
 
     @GetMapping("/paged")
     public ResponseEntity<PagedResponse<ProductResponse>> getAllProductsPaged(
-            @PageableDefault(size = 10, sort = "id", direction = Sort.Direction.DESC) Pageable pageable) {
+            @PageableDefault(size = 100, sort = "id", direction = Sort.Direction.DESC) Pageable pageable) {
         try {
             Page<ProductResponse> responsePage = productService.getAllProducts(pageable);
 
@@ -234,7 +234,7 @@ public class ProductRestController {
     @GetMapping("/paged/category/{categoryId}")
     public ResponseEntity<PagedResponse<ProductResponse>> getProductsByCategoryPaged(
             @PathVariable Long categoryId,
-            @PageableDefault(size = 10, sort = "id") Pageable pageable) {
+            @PageableDefault(size = 100, sort = "id") Pageable pageable) {
         try {
             Page<ProductResponse> responsePage = productService.getProductsByCategory(categoryId, pageable);
             return ResponseEntity.ok(PagedResponse.of(responsePage));
@@ -246,7 +246,7 @@ public class ProductRestController {
     @GetMapping("/paged/stock")
     public ResponseEntity<PagedResponse<ProductResponse>> getProductsByStockPaged(
             @RequestParam boolean inStock,
-            @PageableDefault(size = 10, sort = "stock", direction = Sort.Direction.DESC) Pageable pageable) {
+            @PageableDefault(size = 100, sort = "stock", direction = Sort.Direction.DESC) Pageable pageable) {
         try {
             Page<ProductResponse> responsePage = productService.findByStockAvailability(inStock, pageable);
             return ResponseEntity.ok(PagedResponse.of(responsePage));
@@ -275,7 +275,7 @@ public class ProductRestController {
             @RequestParam(required = false) Double minPrice,
             @RequestParam(required = false) Double maxPrice,
             @RequestParam(required = false) Boolean inStock,
-            @PageableDefault(size = 10, sort = "id") Pageable pageable) {
+            @PageableDefault(size = 100, sort = "id") Pageable pageable) {
 
         Page<ProductResponse> page = productSearchService.searchProductsDynamic(
                 query, categoryId, minPrice, maxPrice, inStock, pageable);

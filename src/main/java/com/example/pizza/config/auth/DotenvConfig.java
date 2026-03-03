@@ -1,6 +1,7 @@
 package com.example.pizza.config.auth;
 
 import io.github.cdimascio.dotenv.Dotenv;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationContextInitializer;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.core.env.ConfigurableEnvironment;
@@ -10,6 +11,7 @@ import org.springframework.stereotype.Component;
 import java.util.HashMap;
 import java.util.Map;
 
+@Slf4j
 @Component
 public class DotenvConfig implements ApplicationContextInitializer<ConfigurableApplicationContext> {
 
@@ -23,7 +25,7 @@ public class DotenvConfig implements ApplicationContextInitializer<ConfigurableA
                 java.util.Arrays.asList(activeProfiles).contains("dev");
 
         if (!isDevProfile) {
-            System.out.println("Skipping .env loading (not dev profile)");
+            log.debug("Skipping .env loading (not dev profile)");
             return;
         }
 
@@ -41,12 +43,12 @@ public class DotenvConfig implements ApplicationContextInitializer<ConfigurableA
             environment.getPropertySources()
                     .addFirst(new MapPropertySource("dotenvProperties", dotenvMap));
 
-            System.out.println(".env file loaded successfully (" + dotenvMap.size() + " variables)");
+            log.debug(".env file loaded successfully ({} variables)", dotenvMap.size());
 
         } catch (Exception e) {
-            System.err.println("Warning: Could not load .env file: " + e.getMessage());
-            System.err.println("Make sure .env file exists in project root");
-            System.err.println("Continuing with system environment variables...");
+            log.warn("Warning: Could not load .env file: {}", e.getMessage());
+            log.warn("Make sure .env file exists in project root");
+            log.warn("Continuing with system environment variables...");
         }
     }
 }

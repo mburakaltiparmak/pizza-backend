@@ -20,7 +20,7 @@ import java.util.List;
 @Entity
 @Data
 @Table(schema = "pizza", name = "orders")
-@JsonIgnoreProperties({"hibernateLazyInitializer", "handler"})
+@JsonIgnoreProperties({ "hibernateLazyInitializer", "handler" })
 public class Order {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -81,9 +81,26 @@ public class Order {
     @EqualsAndHashCode.Exclude
     private Payment payment;
 
+    @Column(name = "discount_amount")
+    private double discountAmount = 0.0;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "promo_code_id")
+    @ToString.Exclude
+    @EqualsAndHashCode.Exclude
+    private PromoCode promoCode;
+
+    @Column(name = "uuid", nullable = false, unique = true, updatable = false)
+    private java.util.UUID uuid;
+
     @PrePersist
     @PreUpdate
     private void prepareAndValidateOrder() {
+        // 0. UUID Oluştur (Eğer yoksa)
+        if (this.uuid == null) {
+            this.uuid = java.util.UUID.randomUUID();
+        }
+
         // 1. Role ve guestEmail ayarla (setRoleAndEmail metodunun içeriği)
         if (this.user != null && this.user.getId() != null) {
             this.orderRole = Role.CUSTOMER;
@@ -106,7 +123,8 @@ public class Order {
             if (this.deliveryAddress.getEmail() == null || this.deliveryAddress.getEmail().trim().isEmpty()) {
                 throw new IllegalStateException("Misafir siparişi için email gereklidir");
             }
-            if (this.deliveryAddress.getRecipientName() == null || this.deliveryAddress.getRecipientName().trim().isEmpty()) {
+            if (this.deliveryAddress.getRecipientName() == null
+                    || this.deliveryAddress.getRecipientName().trim().isEmpty()) {
                 throw new IllegalStateException("Misafir siparişi için alıcı adı gereklidir");
             }
         }

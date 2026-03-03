@@ -7,6 +7,7 @@ import com.example.pizza.service.payment.IyzicoPaymentService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -19,7 +20,8 @@ import java.util.Map;
  * Payment Controller - Iyzico Integration
  *
  * Endpoints:
- * - POST /api/payment/process/{orderId} - Direct payment (Non-3DS, sandbox only)
+ * - POST /api/payment/process/{orderId} - Direct payment (Non-3DS, sandbox
+ * only)
  * - POST /api/payment/3ds/init/{orderId} - Initialize 3DS payment
  * - POST /api/payment/3ds/callback - 3DS callback handler (PUBLIC)
  * - GET /api/payment/{paymentId}/status - Get payment status
@@ -34,6 +36,7 @@ import java.util.Map;
 public class PaymentController {
 
     private final IyzicoPaymentService iyzicoPaymentService;
+    private final com.example.pizza.service.order.OrderService orderService;
 
     // =========================================================================
     // DIRECT PAYMENT (Non-3DS) - FOR TESTING ONLY
@@ -47,13 +50,14 @@ public class PaymentController {
      * - Success: 5528790000000008
      * - Failure: 5528790000000016
      */
-    @PostMapping("/process/{orderId}")
+    @PostMapping("/process/{orderUuid}")
     @PreAuthorize("hasAnyRole('CUSTOMER', 'ADMIN')")
     public ResponseEntity<PaymentResponse> processDirectPayment(
-            @PathVariable Long orderId,
+            @PathVariable java.util.UUID orderUuid,
             @Valid @RequestBody PaymentCardRequest cardRequest) {
 
-        log.info("Direct payment request for order: {}", orderId);
+        log.info("Direct payment request for order UUID: {}", orderUuid);
+        Long orderId = orderService.getOrderByUuid(orderUuid).getId();
         PaymentResponse response = iyzicoPaymentService.processDirectPayment(orderId, cardRequest);
 
         if ("SUCCESS".equals(response.getStatus())) {
@@ -71,14 +75,15 @@ public class PaymentController {
      * Initialize 3D Secure payment
      * Returns HTML content to render in iframe for 3DS verification
      */
-    @PostMapping("/3ds/init/{orderId}")
-    @PreAuthorize("hasAnyRole('CUSTOMER', 'ADMIN')")
+    @PostMapping("/3ds/init/{orderUuid}")
+    // @PreAuthorize("hasAnyRole('CUSTOMER', 'ADMIN')") // Allow guests
     public ResponseEntity<PaymentResponse> initThreeDSPayment(
-            @PathVariable Long orderId,
+            @PathVariable java.util.UUID orderUuid,
             @Valid @RequestBody PaymentCardRequest cardRequest,
             @RequestParam(required = false) String callbackUrl) {
 
-        log.info("3DS init request for order: {}", orderId);
+        log.info("3DS init request for order UUID: {}", orderUuid);
+        Long orderId = orderService.getOrderByUuid(orderUuid).getId();
 
         PaymentResponse response = iyzicoPaymentService.initThreeDSPayment(
                 orderId, cardRequest, callbackUrl);
@@ -93,6 +98,35 @@ public class PaymentController {
     }
 
     /**
+     * Initialize Iyzico Checkout Form (Hosted Payment Page)
+     * Returns script/HTML only - sensitive card data is collected by Iyzico
+     */
+    @PostMapping("/checkout/init/{orderUuid}")
+    // @PreAuthorize("hasAnyRole('CUSTOMER', 'ADMIN')") // Allow guests
+    public ResponseEntity<PaymentResponse> initCheckoutForm(
+            @PathVariable java.util.UUID orderUuid,
+            @RequestParam(required = false) String callbackUrl) {
+
+        log.info("Checkout form init request for order UUID: {}", orderUuid);
+        Long orderId = orderService.getOrderByUuid(orderUuid).getId();
+
+        PaymentResponse response = iyzicoPaymentService.initCheckoutForm(orderId, callbackUrl);
+
+        if ("PENDING_CHECKOUT".equals(response.getStatus())) {
+            return ResponseEntity.ok(response);
+        } else if ("FAILED".equals(response.getStatus())) {
+            return ResponseEntity.status(HttpStatus.PAYMENT_REQUIRED).body(response);
+        }
+
+        return ResponseEntity.ok(response);
+    }
+
+    @Value("${app.frontend.url}")
+    private String frontendUrl;
+
+    // ...
+
+    /**
      * 3D Secure callback endpoint
      * This is called by Iyzico after user completes 3DS verification
      * MUST BE PUBLIC - No authentication required
@@ -101,46 +135,67 @@ public class PaymentController {
     public ResponseEntity<?> handleThreeDSCallback(
             @RequestParam(required = false) String conversationId,
             @RequestParam(required = false) String paymentId,
+            @RequestParam(required = false) String token,
             @RequestParam(required = false) String status,
             @RequestParam(required = false) String mdStatus) {
 
-        log.info("3DS callback received - conversationId: {}, paymentId: {}, status: {}, mdStatus: {}",
-                conversationId, paymentId, status, mdStatus);
-
-        // Validate required parameters
-        if (conversationId == null || paymentId == null) {
-            log.error("Missing required callback parameters");
-            return ResponseEntity.badRequest().body(Map.of(
-                    "error", "Missing required parameters",
-                    "message", "conversationId and paymentId are required"
-            ));
-        }
+        log.info("Callback received - token: {}, conversationId: {}, paymentId: {}, status: {}",
+                token, conversationId, paymentId, status);
 
         try {
-            PaymentResponse response = iyzicoPaymentService.handleThreeDSCallback(
-                    conversationId, paymentId);
+            PaymentResponse response;
+
+            if (token != null) {
+                // Return HTML page that redirects to success page
+                response = iyzicoPaymentService.handleCheckoutCallback(token);
+            } else if (conversationId != null && paymentId != null) {
+                // Return HTML page that redirects to failure page
+                response = iyzicoPaymentService.handleThreeDSCallback(conversationId, paymentId);
+            } else {
+                log.error("Missing required callback parameters");
+                return ResponseEntity.badRequest().body(Map.of(
+                        "error", "Missing required parameters",
+                        "message", "token or conversationId+paymentId required"));
+            }
+
+            log.info("Callback Response - OrderUUID: {}, OrderID: {}, Status: {}",
+                    response.getOrderUuid(), response.getOrderId(), response.getStatus());
+
+            String targetValue;
+            String paramName;
+
+            if (response.getOrderUuid() != null) {
+                targetValue = response.getOrderUuid().toString();
+                paramName = "uuid";
+            } else {
+                targetValue = response.getOrderId() != null
+                        ? String.valueOf(response.getOrderId())
+                        : (response.getIyzicoConversationId() != null
+                                ? response.getIyzicoConversationId()
+                                : (conversationId != null ? conversationId : "0"));
+                paramName = "orderId";
+            }
 
             if ("SUCCESS".equals(response.getStatus())) {
-                // Return HTML page that redirects to success page
                 String successHtml = buildRedirectHtml(
-                        "/payment/success?orderId=" + conversationId,
+                        frontendUrl + "/payment/success?" + paramName + "=" + targetValue,
                         "Ödeme başarılı! Yönlendiriliyorsunuz...");
                 return ResponseEntity.ok()
                         .header("Content-Type", "text/html; charset=UTF-8")
                         .body(successHtml);
             } else {
-                // Return HTML page that redirects to failure page
                 String failureHtml = buildRedirectHtml(
-                        "/payment/failure?orderId=" + conversationId + "&error=" + response.getErrorMessage(),
+                        frontendUrl + "/payment/failure?" + paramName + "=" + targetValue + "&error="
+                                + response.getErrorMessage(),
                         "Ödeme başarısız! Yönlendiriliyorsunuz...");
                 return ResponseEntity.ok()
                         .header("Content-Type", "text/html; charset=UTF-8")
                         .body(failureHtml);
             }
         } catch (Exception e) {
-            log.error("3DS callback processing failed", e);
+            log.error("Callback processing failed", e);
             String errorHtml = buildRedirectHtml(
-                    "/payment/failure?error=" + e.getMessage(),
+                    frontendUrl + "/payment/failure?error=" + e.getMessage(),
                     "Ödeme işlemi sırasında hata oluştu!");
             return ResponseEntity.ok()
                     .header("Content-Type", "text/html; charset=UTF-8")
@@ -172,16 +227,17 @@ public class PaymentController {
     // =========================================================================
 
     /**
-     * Get payment status by payment ID
+     * Get payment status by payment UUID (Secure)
      */
-    @GetMapping("/{paymentId}/status")
-    @PreAuthorize("hasAnyRole('CUSTOMER', 'ADMIN')")
-    public ResponseEntity<PaymentResponse> getPaymentStatus(@PathVariable Long paymentId) {
-        Payment payment = iyzicoPaymentService.getPaymentById(paymentId);
+    @GetMapping("/{uuid}/status")
+    // @PreAuthorize("hasAnyRole('CUSTOMER', 'ADMIN')") // Allow guests
+    public ResponseEntity<PaymentResponse> getPaymentStatus(@PathVariable String uuid) {
+        Payment payment = iyzicoPaymentService.getPaymentByUuid(uuid);
 
         PaymentResponse response = PaymentResponse.builder()
                 .paymentId(payment.getId())
                 .id(payment.getId())
+                .uuid(payment.getUuid())
                 .status(payment.getPaymentStatus().name())
                 .paymentStatus(payment.getPaymentStatus())
                 .paymentMethod(payment.getPaymentMethod())
@@ -205,14 +261,16 @@ public class PaymentController {
     /**
      * Get payment by order ID
      */
-    @GetMapping("/order/{orderId}")
-    @PreAuthorize("hasAnyRole('CUSTOMER', 'ADMIN')")
-    public ResponseEntity<PaymentResponse> getPaymentByOrderId(@PathVariable Long orderId) {
+    @GetMapping("/order/{orderUuid}")
+    // @PreAuthorize("hasAnyRole('CUSTOMER', 'ADMIN')") // Allow guests
+    public ResponseEntity<PaymentResponse> getPaymentByOrderUuid(@PathVariable java.util.UUID orderUuid) {
+        Long orderId = orderService.getOrderByUuid(orderUuid).getId();
         Payment payment = iyzicoPaymentService.getPaymentByOrderId(orderId);
 
         PaymentResponse response = PaymentResponse.builder()
                 .paymentId(payment.getId())
                 .id(payment.getId())
+                .uuid(payment.getUuid())
                 .status(payment.getPaymentStatus().name())
                 .paymentStatus(payment.getPaymentStatus())
                 .paymentMethod(payment.getPaymentMethod())

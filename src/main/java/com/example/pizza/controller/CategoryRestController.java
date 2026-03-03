@@ -58,7 +58,8 @@ public class CategoryRestController {
             CategoryResponse response = new CategoryResponse(
                     category.getId(),
                     category.getName(),
-                    category.getImg());
+                    category.getImg(),
+                    category.getProducts() != null ? category.getProducts().size() : 0);
             return ResponseEntity.ok(response);
         } catch (Exception e) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
@@ -76,7 +77,8 @@ public class CategoryRestController {
             CategoryResponse response = new CategoryResponse(
                     savedCategory.getId(),
                     savedCategory.getName(),
-                    savedCategory.getImg());
+                    savedCategory.getImg(),
+                    0);
             return ResponseEntity.status(HttpStatus.CREATED).body(response);
         } catch (IOException e) {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
@@ -95,7 +97,8 @@ public class CategoryRestController {
             CategoryResponse response = new CategoryResponse(
                     updatedCategory.getId(),
                     updatedCategory.getName(),
-                    updatedCategory.getImg());
+                    updatedCategory.getImg(),
+                    updatedCategory.getProducts() != null ? updatedCategory.getProducts().size() : 0);
             return ResponseEntity.ok(response);
         } catch (IOException e) {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
@@ -193,7 +196,8 @@ public class CategoryRestController {
 
             // Category -> CategoryResponse mapping
             Page<CategoryResponse> responsePage = categoryPage
-                    .map(c -> new CategoryResponse(c.getId(), c.getName(), c.getImg()));
+                    .map(c -> new CategoryResponse(c.getId(), c.getName(), c.getImg(),
+                            c.getProducts() != null ? c.getProducts().size() : 0));
 
             // Filter out CUSTOM_BASE category
             List<CategoryResponse> filteredContent = responsePage.getContent().stream()
